@@ -2,10 +2,10 @@ use jack::Client as JackClient;
 use thiserror::*;
 
 use crossterm::{cursor, event, style, terminal, ExecutableCommand, QueueableCommand};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 mod config;
-mod model;
 mod graph;
+mod model;
 use graph::JackGraph;
 
 #[derive(Debug, Error)]
@@ -28,6 +28,16 @@ fn main() {
     stdout.flush().unwrap();
     let mut selected_idx = 0;
     let mut modes = Vec::new();
+    let mut config: config::LockConfig = std::env::args()
+        .last()
+        .and_then(|path| std::fs::OpenOptions::new().read(true).open(path).ok())
+        .and_then(|mut fl| {
+            let mut buffer = String::new();
+            fl.read_to_string(&mut buffer).ok()?;
+            Some(buffer)
+        })
+        .and_then(|data| toml::from_str(&data).ok())
+        .unwrap_or_default();
     loop {
         stdout
             .queue(terminal::Clear(terminal::ClearType::All))
@@ -38,13 +48,29 @@ fn main() {
             .unwrap();
         let graph: JackGraph = JackGraph::parse_client(&jackclient).unwrap();
         for (idx, client) in graph.all_clients().enumerate() {
-            let mode = modes.iter().find(|(mdx, _)| idx == *mdx).copied().map_or(0, |(_, m)| m);
+            let mode = modes
+                .iter()
+                .find(|(mdx, _)| idx == *mdx)
+                .copied()
+                .map_or(0, |(_, m)| m);
             let attr = if idx == selected_idx {
                 style::Attribute::Reverse
             } else {
                 style::Attribute::Reset
             };
-            write!(stdout, "{}{:02} : {}", attr, idx, client).unwrap();
+            let client_lock = config.client_status(client);
+            let client_lock_str = match client_lock {
+                config::LockStatus::None => "<None  >",
+                config::LockStatus::Force => "<Forced>",
+                config::LockStatus::Block => "<Block >",
+                config::LockStatus::Full => "<Full  >",
+            };
+            write!(
+                stdout,
+                "{}{:02} : {} ({})",
+                attr, idx, client, client_lock_str
+            )
+            .unwrap();
             stdout.execute(cursor::MoveToNextLine(1)).unwrap();
             if mode == 0 {
                 continue;
@@ -54,19 +80,48 @@ fn main() {
                 let is_midi = data.port_type().unwrap().to_lowercase().contains("midi");
                 let is_input = data.flags().contains(jack::PortFlags::IS_INPUT);
 
+                let port_lock = config.port_status(port_name);
+                let port_lock_str = match port_lock {
+                    config::LockStatus::None => "<None  >",
+                    config::LockStatus::Force => "<Forced>",
+                    config::LockStatus::Block => "<Block >",
+                    config::LockStatus::Full => "<Full  >",
+                };
+
                 let arrow = match (is_midi, is_input) {
                     (true, true) => "<-M-",
                     (false, true) => "<-A-",
                     (true, false) => "-M->",
                     (false, false) => "-A->",
                 };
-                write!(stdout, "     |{} {}", arrow, port_name.port_shortname()).unwrap();
+                write!(
+                    stdout,
+                    "     |{} {} ({})",
+                    arrow,
+                    port_name.port_shortname(),
+                    port_lock_str
+                )
+                .unwrap();
                 stdout.execute(cursor::MoveToNextLine(1)).unwrap();
                 if mode <= 1 {
                     continue;
                 }
                 for con_name in port_connections {
-                    write!(stdout, "           |{} {}", arrow, con_name.as_ref()).unwrap();
+                    let con_lock = config.connection_status(port_name, con_name);
+                    let con_lock_str = match con_lock {
+                        config::LockStatus::None => "<None  >",
+                        config::LockStatus::Force => "<Forced>",
+                        config::LockStatus::Block => "<Block >",
+                        config::LockStatus::Full => "<Full  >",
+                    };
+                    write!(
+                        stdout,
+                        "           |{} {} ({})",
+                        arrow,
+                        con_name.as_ref(),
+                        con_lock_str
+                    )
+                    .unwrap();
                     stdout.execute(cursor::MoveToNextLine(1)).unwrap();
                 }
             }
@@ -115,6 +170,38 @@ fn main() {
                 stdout.flush().unwrap();
                 terminal::disable_raw_mode().unwrap();
                 return;
+            }
+            event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Char('k'),
+                ..
+            }) => {
+                for prt in graph.all_ports() {
+                    if config.get_port_lock(prt).is_none() {
+                        let client_lock = config.client_status(prt.client_name());
+                        config.set_port_lock(prt.clone(), client_lock);
+                    }
+                }
+                for (a, b) in graph.all_connections() {
+                    config.add_connection(a.clone(), b.clone());
+                }
+                for cl in graph.all_clients() {
+                    if config.get_client_lock(cl).is_none() {
+                        config.set_client_lock(cl.to_owned(), config::LockStatus::None);
+                    }
+                }
+            }
+            event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Char('d'),
+                ..
+            }) => {
+                let mut outfile = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(true)
+                    .write(true)
+                    .open("outconf.toml")
+                    .unwrap();
+                let outdata = toml::to_string_pretty(&config).unwrap();
+                write!(&mut outfile, "{}", outdata).unwrap();
             }
             other => {
                 eprintln!("Other: {:?}", other);

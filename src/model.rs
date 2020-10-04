@@ -16,24 +16,24 @@ pub enum NameError {
     ClientnameTooLong,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct PortFullname<T: AsRef<str> = String> {
-    buffer: T,
+#[derive(Debug,  Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PortFullname {
+    buffer: String,
     split_idx: usize,
 }
 
-impl<'de, T: AsRef<str> + Deserialize<'de>> Deserialize<'de> for PortFullname<T> {
+impl<'de> Deserialize<'de> for PortFullname {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let buffer = T::deserialize(deserializer)?;
+        let buffer = String::deserialize(deserializer)?;
         let res = Self::new(buffer).map_err(SerdeError::custom)?;
         Ok(res)
     }
 }
 
-impl<T: AsRef<str>> Serialize for PortFullname<T> {
+impl Serialize for PortFullname {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -42,7 +42,7 @@ impl<T: AsRef<str>> Serialize for PortFullname<T> {
     }
 }
 
-impl<T: AsRef<str>> fmt::Display for PortFullname<T> {
+impl fmt::Display for PortFullname {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
             "{}:{}",
@@ -52,62 +52,44 @@ impl<T: AsRef<str>> fmt::Display for PortFullname<T> {
     }
 }
 
-impl<'a> TryFrom<&'a str> for PortFullname<&'a str> {
+impl<'a> TryFrom<&'a str> for PortFullname {
     type Error = NameError;
-    fn try_from(value: &'a str) -> Result<PortFullname<&'a str>, NameError> {
+    fn try_from(value: &'a str) -> Result<Self, NameError> {
+        PortFullname::new(value.to_owned())
+    }
+}
+
+impl TryFrom<String> for PortFullname {
+    type Error = NameError;
+    fn try_from(value: String) -> Result<Self, NameError> {
         PortFullname::new(value)
     }
 }
 
-impl TryFrom<String> for PortFullname<String> {
-    type Error = NameError;
-    fn try_from(value: String) -> Result<PortFullname<String>, NameError> {
-        PortFullname::new(value)
-    }
-}
-
-impl<T: AsRef<str>> PortFullname<T> {
-    pub fn new(buffer: T) -> Result<PortFullname<T>, NameError> {
-        if buffer.as_ref().len() > *jack::PORT_NAME_SIZE {
+impl PortFullname {
+    pub fn new(buffer: String) -> Result<Self, NameError> {
+        if buffer.len() > *jack::PORT_NAME_SIZE {
             return Err(NameError::PortnameTooLong);
         }
         let split_idx = buffer
-            .as_ref()
             .find(':')
             .ok_or_else(|| NameError::InvalidFullname)?;
         if split_idx >= *jack::CLIENT_NAME_SIZE {
             return Err(NameError::ClientnameTooLong);
         }
-        Ok(Self { buffer, split_idx })
+        Ok(Self { buffer , split_idx })
     }
 
     pub fn client_name(&self) -> &str {
-        self.buffer.as_ref().split_at(self.split_idx).0
+        self.buffer.split_at(self.split_idx).0
     }
 
     pub fn port_shortname(&self) -> &str {
-        self.buffer.as_ref().split_at(self.split_idx + 1).1
-    }
-
-    pub fn borrow<'a>(&'a self) -> PortFullname<&'a str> {
-        PortFullname {
-            buffer: self.buffer.as_ref(),
-            split_idx: self.split_idx,
-        }
-    }
-
-    pub fn to_string(&self) -> PortFullname<String> {
-        PortFullname {
-            buffer: self.buffer.as_ref().to_owned(),
-            split_idx: self.split_idx,
-        }
+        self.buffer.split_at(self.split_idx + 1).1
     }
 }
 
-impl<T> AsRef<str> for PortFullname<T>
-where
-    T: AsRef<str>,
-{
+impl AsRef<str> for PortFullname {
     fn as_ref(&self) -> &str {
         self.buffer.as_ref()
     }
@@ -119,16 +101,16 @@ mod tests {
     use std::collections::HashMap;
     #[test]
     fn test_serde() {
-        let name1 = PortFullname::new("client1:port1:port3").unwrap();
+        let name1 = PortFullname::new("client1:port1:port3".to_owned()).unwrap();
         assert_eq!(name1.client_name(), "client1");
         assert_eq!(name1.port_shortname(), "port1:port3");
-        let name2 = PortFullname::new("client2:port1:port3").unwrap();
+        let name2 = PortFullname::new("client2:port1:port3".to_owned()).unwrap();
         assert_eq!(name2.client_name(), "client2");
         assert_eq!(name2.port_shortname(), "port1:port3");
         let mut map1 = HashMap::new();
         map1.insert("root", vec![name1, name2]);
         let ser_mapped = toml::to_string_pretty(&map1).unwrap();
-        let parsed: HashMap<&str, Vec<PortFullname<&str>>> =
+        let parsed: HashMap<&str, Vec<PortFullname>> =
             toml::de::from_str(&ser_mapped).unwrap();
         assert_eq!(map1, parsed);
     }

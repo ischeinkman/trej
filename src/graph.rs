@@ -34,8 +34,8 @@ impl JackGraph {
         let mut graph = JackGraph::new();
         let port_names = client.ports(None, None, jack::PortFlags::empty());
         for port in &port_names {
-            let parsed = PortFullname::new(port)?;
-            graph.add_port(parsed.to_string());
+            let parsed = PortFullname::new(port.to_owned())?;
+            graph.add_port(parsed);
         }
         let all_ports = port_names
             .iter()
@@ -44,7 +44,10 @@ impl JackGraph {
             let port_a = a_data.name()?;
             for port_b in port_names.iter() {
                 if a_data.is_connected_to(&port_b)? {
-                    graph.add_connection(PortFullname::new(&port_a)?, PortFullname::new(port_b)?);
+                    graph.add_connection(
+                        PortFullname::new(port_a.to_owned())?,
+                        PortFullname::new(port_b.to_owned())?,
+                    );
                 }
             }
         }
@@ -53,7 +56,7 @@ impl JackGraph {
     pub fn new() -> Self {
         Self { data: Vec::new() }
     }
-    pub fn add_port(&mut self, name: PortFullname<String>) -> Option<PortFullname<String>> {
+    pub fn add_port(&mut self, name: PortFullname) -> Option<PortFullname> {
         match self.port_idx(&name) {
             Ok(_) => Some(name),
             Err(idx) => {
@@ -62,24 +65,19 @@ impl JackGraph {
             }
         }
     }
-    fn port_idx<T: AsRef<str>>(&self, port: &PortFullname<T>) -> Result<usize, usize> {
-        self.data
-            .binary_search_by_key(&port.borrow(), |elm| elm.name.borrow())
+    fn port_idx(&self, port: &PortFullname) -> Result<usize, usize> {
+        self.data.binary_search_by_key(&port, |elm| &elm.name)
     }
-    fn port_idx_or_insert<T: AsRef<str>>(&mut self, port: PortFullname<T>) -> usize {
+    fn port_idx_or_insert(&mut self, port: PortFullname) -> usize {
         match self.port_idx(&port) {
             Ok(idx) => idx,
             Err(idx) => {
-                self.data.insert(idx, PortEntry::new(port.to_string()));
+                self.data.insert(idx, PortEntry::new(port));
                 idx
             }
         }
     }
-    pub fn add_connection<ABuff: AsRef<str>, BBuff: AsRef<str>>(
-        &mut self,
-        port_a: PortFullname<ABuff>,
-        port_b: PortFullname<BBuff>,
-    ) {
+    pub fn add_connection(&mut self, port_a: PortFullname, port_b: PortFullname) {
         let port_a_idx = self.port_idx_or_insert(port_a);
         let port_b_idx = self.port_idx_or_insert(port_b);
         if let Err(idx) = self.data[port_a_idx].connections.binary_search(&port_b_idx) {
@@ -90,29 +88,37 @@ impl JackGraph {
         }
     }
 
-    pub fn port_connections<'a, T: AsRef<str> + 'a>(
+    pub fn port_connections<'a, 'b>(
         &'a self,
-        name: &PortFullname<T>,
-    ) -> impl Iterator<Item = PortFullname<&'a str>> + 'a {
+        name: &'b PortFullname,
+    ) -> impl Iterator<Item = &'a PortFullname> + 'a {
         let entry_idx = self.port_idx(name).ok();
         let entry = entry_idx.and_then(|idx| self.data.get(idx));
         let con_idx_iter = entry.into_iter().flat_map(|ent| ent.connections.iter());
         con_idx_iter.flat_map(move |idx| self.entry_name(*idx))
     }
 
-    fn entry_name<'a>(&'a self, idx: usize) -> Option<PortFullname<&'a str>> {
-        self.data.get(idx).map(|ent| ent.name.borrow())
+    pub fn all_connections<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (&'a PortFullname, &'a PortFullname)> + 'a {
+        let data_ref = &self.data;
+        self.data.iter().flat_map(move |ent| {
+            let a_name = &ent.name;
+            ent.connections
+                .iter()
+                .filter_map(move |idx| data_ref.get(*idx))
+                .map(move |b_ent| (a_name, &b_ent.name))
+        })
+    }
+
+    fn entry_name(&self, idx: usize) -> Option<&PortFullname> {
+        self.data.get(idx).map(|ent| &ent.name)
     }
 
     pub fn client_connections<'a>(
         &'a self,
         client: &'a str,
-    ) -> impl Iterator<
-        Item = (
-            PortFullname<&'a str>,
-            impl Iterator<Item = PortFullname<&'a str>>,
-        ),
-    > + 'a {
+    ) -> impl Iterator<Item = (&PortFullname, impl Iterator<Item = &PortFullname>)> + 'a {
         let client_ports = self
             .data
             .iter()
@@ -122,12 +128,12 @@ impl JackGraph {
 
         client_ports.map(move |ent| {
             let ret = ent.connections.iter().flat_map(connection_callback);
-            (ent.name.borrow(), ret)
+            (&ent.name, ret)
         })
     }
 
-    pub fn all_ports(&self) -> impl Iterator<Item = PortFullname<&str>> {
-        self.data.iter().map(|ent| ent.name.borrow())
+    pub fn all_ports(&self) -> impl Iterator<Item = &PortFullname> {
+        self.data.iter().map(|ent| &ent.name)
     }
 
     pub fn all_clients<'a>(&'a self) -> impl Iterator<Item = &'a str> + 'a {
@@ -148,13 +154,10 @@ impl JackGraph {
         first.into_iter().chain(rest)
     }
 
-    pub fn client_ports<'a>(
-        &'a self,
-        client: &'a str,
-    ) -> impl Iterator<Item = PortFullname<&'a str>> + 'a {
+    pub fn client_ports<'a>(&'a self, client: &'a str) -> impl Iterator<Item = &PortFullname> + 'a {
         self.data
             .iter()
-            .map(|ent| ent.name.borrow())
+            .map(|ent| &ent.name)
             .skip_while(move |name| name.client_name() != client)
             .take_while(move |name| name.client_name() == client)
     }
