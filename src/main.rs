@@ -5,8 +5,8 @@ use crossterm::{cursor, event, style, terminal, ExecutableCommand, QueueableComm
 use std::io::{self, Read, Write};
 mod config;
 mod graph;
-mod model;
 use graph::JackGraph;
+mod model;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -26,7 +26,7 @@ fn main() {
         .queue(cursor::Hide)
         .unwrap();
     stdout.flush().unwrap();
-    let mut selected_idx = 0;
+    let mut selected_idx = 0usize;
     let mut modes = Vec::new();
     let mut config: config::LockConfig = std::env::args()
         .last()
@@ -38,6 +38,7 @@ fn main() {
         })
         .and_then(|data| toml::from_str(&data).ok())
         .unwrap_or_default();
+    let grph = JackGraph::new(jackclient).unwrap();
     loop {
         stdout
             .queue(terminal::Clear(terminal::ClearType::All))
@@ -46,8 +47,7 @@ fn main() {
             .unwrap()
             .flush()
             .unwrap();
-        let graph: JackGraph = JackGraph::parse_client(&jackclient).unwrap();
-        for (idx, client) in graph.all_clients().enumerate() {
+        for (idx, client) in grph.all_clients().enumerate() {
             let mode = modes
                 .iter()
                 .find(|(mdx, _)| idx == *mdx)
@@ -75,12 +75,11 @@ fn main() {
             if mode == 0 {
                 continue;
             }
-            for (port_name, port_connections) in graph.client_connections(client) {
-                let data = jackclient.port_by_name(&port_name.as_ref()).unwrap();
-                let is_midi = data.port_type().unwrap().to_lowercase().contains("midi");
-                let is_input = data.flags().contains(jack::PortFlags::IS_INPUT);
+            for (data, port_connections) in grph.client_connections(client) {
+                let is_midi = data.category.is_midi();
+                let is_input = data.direction.is_input();
 
-                let port_lock = config.port_status(port_name);
+                let port_lock = config.port_status(&data.name);
                 let port_lock_str = match port_lock {
                     config::LockStatus::None => "<None  >",
                     config::LockStatus::Force => "<Forced>",
@@ -98,7 +97,7 @@ fn main() {
                     stdout,
                     "     |{} {} ({})",
                     arrow,
-                    port_name.port_shortname(),
+                    data.name.port_shortname(),
                     port_lock_str
                 )
                 .unwrap();
@@ -106,8 +105,8 @@ fn main() {
                 if mode <= 1 {
                     continue;
                 }
-                for con_name in port_connections {
-                    let con_lock = config.connection_status(port_name, con_name);
+                for con_data in port_connections {
+                    let con_lock = config.connection_status(&data.name, &con_data.name);
                     let con_lock_str = match con_lock {
                         config::LockStatus::None => "<None  >",
                         config::LockStatus::Force => "<Forced>",
@@ -118,7 +117,7 @@ fn main() {
                         stdout,
                         "           |{} {} ({})",
                         arrow,
-                        con_name.as_ref(),
+                        con_data.name.as_ref(),
                         con_lock_str
                     )
                     .unwrap();
@@ -175,16 +174,16 @@ fn main() {
                 code: event::KeyCode::Char('k'),
                 ..
             }) => {
-                for prt in graph.all_ports() {
+                for prt in grph.all_ports().map(|data| &data.name) {
                     if config.get_port_lock(prt).is_none() {
                         let client_lock = config.client_status(prt.client_name());
                         config.set_port_lock(prt.clone(), client_lock);
                     }
                 }
-                for (a, b) in graph.all_connections() {
+                for (a, b) in grph.all_connections() {
                     config.add_connection(a.clone(), b.clone());
                 }
-                for cl in graph.all_clients() {
+                for cl in grph.all_clients() {
                     if config.get_client_lock(cl).is_none() {
                         config.set_client_lock(cl.to_owned(), config::LockStatus::None);
                     }

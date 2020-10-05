@@ -16,7 +16,7 @@ pub enum NameError {
     ClientnameTooLong,
 }
 
-#[derive(Debug,  Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct PortFullname {
     buffer: String,
     split_idx: usize,
@@ -71,13 +71,11 @@ impl PortFullname {
         if buffer.len() > *jack::PORT_NAME_SIZE {
             return Err(NameError::PortnameTooLong);
         }
-        let split_idx = buffer
-            .find(':')
-            .ok_or_else(|| NameError::InvalidFullname)?;
+        let split_idx = buffer.find(':').ok_or_else(|| NameError::InvalidFullname)?;
         if split_idx >= *jack::CLIENT_NAME_SIZE {
             return Err(NameError::ClientnameTooLong);
         }
-        Ok(Self { buffer , split_idx })
+        Ok(Self { buffer, split_idx })
     }
 
     pub fn client_name(&self) -> &str {
@@ -95,12 +93,61 @@ impl AsRef<str> for PortFullname {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum PortDirection {
+    In,
+    Out,
+}
+
+impl PortDirection {
+    pub const fn is_input(self) -> bool {
+        match self {
+            PortDirection::In => true,
+            PortDirection::Out => false,
+        }
+    }
+    pub const fn is_output(self) -> bool {
+        match self {
+            PortDirection::In => false,
+            PortDirection::Out => true,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum PortCategory {
+    Midi,
+    Audio,
+    Unknown,
+}
+
+impl PortCategory {
+    pub const fn is_midi(self) -> bool {
+        match self {
+            PortCategory::Midi => true,
+            _ => false,
+        }
+    }
+    pub const fn is_audio(self) -> bool {
+        match self {
+            PortCategory::Audio => true,
+            _ => false,
+        }
+    }
+    pub const fn is_unknown(self) -> bool {
+        match self {
+            PortCategory::Unknown => true,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
     #[test]
-    fn test_serde() {
+    fn test_portname_serde() {
         let name1 = PortFullname::new("client1:port1:port3".to_owned()).unwrap();
         assert_eq!(name1.client_name(), "client1");
         assert_eq!(name1.port_shortname(), "port1:port3");
@@ -110,8 +157,7 @@ mod tests {
         let mut map1 = HashMap::new();
         map1.insert("root", vec![name1, name2]);
         let ser_mapped = toml::to_string_pretty(&map1).unwrap();
-        let parsed: HashMap<&str, Vec<PortFullname>> =
-            toml::de::from_str(&ser_mapped).unwrap();
+        let parsed: HashMap<&str, Vec<PortFullname>> = toml::de::from_str(&ser_mapped).unwrap();
         assert_eq!(map1, parsed);
     }
 }
