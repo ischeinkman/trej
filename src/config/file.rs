@@ -105,9 +105,6 @@ pub struct PortInfo {
 }
 
 impl PortInfo {
-    pub fn new() -> Self {
-        Self::default()
-    }
     pub fn set_lock(&mut self, lock: LockStatus) {
         self.lock = Some(lock);
     }
