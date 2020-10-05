@@ -35,6 +35,70 @@ impl JackGraph {
         Ok(retvl)
     }
 
+    pub fn disconnect(
+        &mut self,
+        source: &PortFullname,
+        dest: &PortFullname,
+    ) -> Result<(), GraphError> {
+        self.client
+            .disconnect_ports_by_name(source.as_ref(), dest.as_ref())?;
+        let mut source_idx = None;
+        let mut dest_idx = None;
+        for (cur_idx, cur_data) in self.ports.iter().enumerate() {
+            if source == &cur_data.name {
+                source_idx = Some(cur_idx);
+            } else if dest == &cur_data.name {
+                dest_idx = Some(cur_idx);
+            }
+            if source_idx.is_some() && dest_idx.is_some() {
+                break;
+            }
+        }
+        let key = source_idx.zip(dest_idx).map(|(a, b)| (a.min(b), a.max(b)));
+        let con_idx = key.and_then(|k| self.connections.binary_search(&k).ok());
+        if let Some(con_idx) = con_idx {
+            self.connections.remove(con_idx);
+        } else {
+            self.update()?;
+        }
+        Ok(())
+    }
+
+    pub fn connect(
+        &mut self,
+        source: &PortFullname,
+        dest: &PortFullname,
+    ) -> Result<(), GraphError> {
+        self.client
+            .connect_ports_by_name(source.as_ref(), dest.as_ref())?;
+        let mut source_idx = None;
+        let mut dest_idx = None;
+        for (cur_idx, cur_data) in self.ports.iter().enumerate() {
+            if source == &cur_data.name {
+                source_idx = Some(cur_idx);
+            } else if dest == &cur_data.name {
+                dest_idx = Some(cur_idx);
+            }
+            if source_idx.is_some() && dest_idx.is_some() {
+                break;
+            }
+        }
+        if let (Some(source_idx), Some(dest_idx)) = (source_idx, dest_idx) {
+            let key = if source_idx < dest_idx {
+                (source_idx, dest_idx)
+            } else {
+                (dest_idx, source_idx)
+            };
+            if let Err(con_idx) = self.connections.binary_search(&key) {
+                self.connections.insert(con_idx, key);
+            }
+            Ok(())
+        } else {
+            self.update()?;
+            Ok(())
+        }
+    }
+
     pub fn update(&mut self) -> Result<(), GraphError> {
         let port_names = self
             .client
