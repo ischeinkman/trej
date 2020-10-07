@@ -11,8 +11,8 @@ pub type ShouldShutdown = bool;
 
 #[derive(Debug)]
 pub struct GraphUi {
-    graph: JackGraph,
-    config: LockConfig,
+    pub graph: JackGraph,
+    pub config: LockConfig,
     output: ScreenWrapper,
     collapsed: HashSet<TreePath>,
     current_screen: Vec<TreePath>,

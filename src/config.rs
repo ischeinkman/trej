@@ -115,24 +115,6 @@ impl LockConfig {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn set_client_lock(&mut self, client : String, lock : LockStatus) -> Option<LockStatus> {
-        self.client_locks.insert(client, lock)
-    }
-    pub fn get_client_lock(&self, client : &str) -> Option<LockStatus> {
-        self.client_locks.get(client).copied()
-    }
-    pub fn set_port_lock(&mut self, port : PortFullname, lock : LockStatus) -> Option<LockStatus> {
-        self.port_locks.insert(port, lock)
-    }
-    pub fn get_port_lock(&self, port : &PortFullname) -> Option<LockStatus> {
-        self.port_locks.get(port).copied()
-    }
-    pub fn add_connection(&mut self, a: PortFullname, b: PortFullname) {
-        let key = if a > b { (b, a) } else { (a, b) };
-        if let Err(idx) = self.connections_list.binary_search(&key) {
-            self.connections_list.insert(idx, key);
-        }
-    }
     pub fn client_status(&self, client: &str) -> LockStatus {
         self.client_locks.get(client).copied().unwrap_or_default()
     }
@@ -144,23 +126,11 @@ impl LockConfig {
     }
     pub fn forced_connections<'a>(
         &'a self,
-        port: &'a PortFullname,
-    ) -> impl Iterator<Item = &'a PortFullname> + 'a {
-        let relevant = self.connections_list.iter().filter_map(move |(a, b)| {
-            if a == port {
-                Some(b)
-            } else if b == port {
-                Some(a)
-            } else {
-                None
-            }
-        });
-        let port_status = self.port_status(port);
-        if port_status.should_force() {
-            Some(relevant).into_iter().flatten()
-        } else {
-            None.into_iter().flatten()
-        }
+    ) -> impl Iterator<Item = (&'a PortFullname, &'a PortFullname)> + 'a {
+        self.connections_list
+            .iter()
+            .filter(move |(a, b)| self.connection_status(a, b).should_force())
+            .map(|(a, b)| (a, b))
     }
     pub fn connection_status(&self, a: &PortFullname, b: &PortFullname) -> LockStatus {
         let con_key = (a.min(b), a.max(b));
