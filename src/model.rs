@@ -101,10 +101,7 @@ pub enum PortDirection {
 
 impl PortDirection {
     pub const fn is_input(self) -> bool {
-        match self {
-            PortDirection::In => true,
-            PortDirection::Out => false,
-        }
+        !self.is_output()
     }
     pub const fn is_output(self) -> bool {
         match self {

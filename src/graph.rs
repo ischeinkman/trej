@@ -105,10 +105,6 @@ impl JackGraph {
         self.update_flag.check()
     }
 
-    pub fn update_flag(&self) -> Notifier {
-        self.update_flag.handle()
-    }
-
     pub fn update(&mut self) -> Result<(), GraphError> {
         self.update_flag.reset();
         let port_names = self
@@ -196,18 +192,6 @@ impl JackGraph {
             let b_name = self.ports.get(b)?;
             Some((a_name, b_name))
         })
-    }
-
-    pub fn client_connections<'a>(
-        &'a self,
-        client: &'a str,
-    ) -> impl Iterator<Item = (&PortData, impl Iterator<Item = &PortData>)> + 'a {
-        self.client_ports(client)
-            .map(move |port| (port, self.port_connections(&port.name)))
-    }
-
-    pub fn all_ports(&self) -> impl Iterator<Item = &PortData> {
-        self.ports.iter()
     }
 
     pub fn port_by_name<'a, 'b>(&'a self, name: &'b PortFullname) -> Option<&'a PortData> {

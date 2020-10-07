@@ -161,31 +161,6 @@ pub enum LockStatus {
 }
 
 impl LockStatus {
-    const fn as_bits(self) -> u8 {
-        self as u8
-    }
-    const fn from_bits(bits: u8) -> LockStatus {
-        let mut retvl = LockStatus::None;
-        if bits & LockStatus::Force.as_bits() != 0 {
-            retvl = retvl.with_force();
-        }
-        if bits & LockStatus::Block.as_bits() != 0 {
-            retvl = retvl.with_block();
-        }
-        retvl
-    }
-    pub const fn with_block(self) -> LockStatus {
-        match self {
-            LockStatus::None | LockStatus::Block => LockStatus::Block,
-            LockStatus::Force | LockStatus::Full => LockStatus::Full,
-        }
-    }
-    pub const fn with_force(self) -> LockStatus {
-        match self {
-            LockStatus::None | LockStatus::Force => LockStatus::Block,
-            LockStatus::Block | LockStatus::Full => LockStatus::Full,
-        }
-    }
     pub const fn should_force(self) -> bool {
         match self {
             LockStatus::None | LockStatus::Block => false,
