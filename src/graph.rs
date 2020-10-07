@@ -24,7 +24,7 @@ impl JackGraph {
     pub fn new(client: jack::Client) -> Result<Self, GraphError> {
         let notifier = Notifier::new();
         let update_flag = notifier.handle();
-        let client = client.activate_async(Notifier::new(), ())?;
+        let client = client.activate_async(notifier, ())?;
         let mut retvl = JackGraph {
             update_flag,
             client,
