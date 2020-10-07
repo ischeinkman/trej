@@ -1,5 +1,7 @@
-use crate::model::{NameError, PortCategory, PortDirection, PortFullname};
+use crate::model::{NameError, PortCategory, PortData, PortDirection, PortFullname};
 use std::convert::TryFrom;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use thiserror::*;
 
 #[derive(Debug, Error)]
@@ -10,23 +12,21 @@ pub enum GraphError {
     ItemName(#[from] NameError),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct PortData {
-    pub name: PortFullname,
-    pub category: PortCategory,
-    pub direction: PortDirection,
-}
-
 #[derive(Debug)]
 pub struct JackGraph {
-    client: jack::Client,
+    update_flag: Notifier,
+    client: jack::AsyncClient<Notifier, ()>,
     ports: Vec<PortData>,
     connections: Vec<(usize, usize)>,
 }
 
 impl JackGraph {
     pub fn new(client: jack::Client) -> Result<Self, GraphError> {
+        let notifier = Notifier::new();
+        let update_flag = notifier.handle();
+        let client = client.activate_async(Notifier::new(), ())?;
         let mut retvl = JackGraph {
+            update_flag,
             client,
             ports: Vec::new(),
             connections: Vec::new(),
@@ -41,6 +41,7 @@ impl JackGraph {
         dest: &PortFullname,
     ) -> Result<(), GraphError> {
         self.client
+            .as_client()
             .disconnect_ports_by_name(source.as_ref(), dest.as_ref())?;
         let mut source_idx = None;
         let mut dest_idx = None;
@@ -70,6 +71,7 @@ impl JackGraph {
         dest: &PortFullname,
     ) -> Result<(), GraphError> {
         self.client
+            .as_client()
             .connect_ports_by_name(source.as_ref(), dest.as_ref())?;
         let mut source_idx = None;
         let mut dest_idx = None;
@@ -99,18 +101,32 @@ impl JackGraph {
         }
     }
 
+    pub fn needs_update(&self) -> bool {
+        self.update_flag.check()
+    }
+
+    pub fn update_flag(&self) -> Notifier {
+        self.update_flag.handle()
+    }
+
+
     pub fn update(&mut self) -> Result<(), GraphError> {
+        self.update_flag.reset();
         let port_names = self
             .client
+            .as_client()
             .ports(None, None, jack::PortFlags::empty())
             .into_iter()
             .map(PortFullname::try_from)
             .collect::<Result<Vec<_>, _>>()?;
         let mut connections = Vec::new();
-        let port_iter = port_names
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, name)| Some((idx, name, self.client.port_by_name(name.as_ref())?)));
+        let port_iter = port_names.iter().enumerate().filter_map(|(idx, name)| {
+            Some((
+                idx,
+                name,
+                self.client.as_client().port_by_name(name.as_ref())?,
+            ))
+        });
         let mut ports = Vec::new();
         for (port_a_idx, port_a_name, port_a) in port_iter {
             let direction = if port_a.flags().contains(jack::PortFlags::IS_INPUT) {
@@ -219,5 +235,76 @@ impl JackGraph {
             .iter()
             .skip_while(move |fullname| fullname.name.client_name() != client)
             .take_while(move |fullname| fullname.name.client_name() == client)
+    }
+}
+
+#[derive(Debug)]
+pub struct Notifier {
+    rf: Arc<AtomicBool>,
+}
+
+impl Notifier {
+    pub fn new() -> Self {
+        Self {
+            rf: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn set(&self) {
+        self.rf.store(true, Ordering::Release);
+    }
+    pub fn reset(&self) {
+        // Need SeqCst b/c we need to gurantee that the graph updating occurs
+        // *after* the store, and that the actual jack client data is updated
+        // *before* the store. Otherwise, if the notifier gets a change mid-update
+        // call, that notification could be written over without the change being
+        // loaded.
+        self.rf.store(false, Ordering::SeqCst);
+    }
+    pub fn check(&self) -> bool {
+        // Since we aren't actually touching the data yet,
+        // we can load this Relaxed and worry about casuality later.
+        self.rf.load(Ordering::Relaxed)
+    }
+    pub fn handle(&self) -> Self {
+        Self {
+            rf: Arc::clone(&self.rf),
+        }
+    }
+}
+
+impl jack::NotificationHandler for Notifier {
+    fn graph_reorder(&mut self, _: &jack::Client) -> jack::Control {
+        self.set();
+        jack::Control::Continue
+    }
+    fn ports_connected(
+        &mut self,
+        _: &jack::Client,
+        _port_id_a: jack::PortId,
+        _port_id_b: jack::PortId,
+        _are_connected: bool,
+    ) {
+        self.set();
+    }
+    fn client_registration(&mut self, _: &jack::Client, _name: &str, _is_registered: bool) {
+        self.set();
+    }
+    fn port_registration(
+        &mut self,
+        _: &jack::Client,
+        _port_id: jack::PortId,
+        _is_registered: bool,
+    ) {
+        self.set();
+    }
+    fn port_rename(
+        &mut self,
+        _: &jack::Client,
+        _port_id: jack::PortId,
+        _old_name: &str,
+        _new_name: &str,
+    ) -> jack::Control {
+        self.set();
+        jack::Control::Continue
     }
 }
