@@ -2,9 +2,8 @@ use jack::Client as JackClient;
 use std::time::Duration;
 use thiserror::*;
 
-use crossterm::{cursor, event, style, terminal, ExecutableCommand, QueueableCommand};
-use std::fmt;
-use std::io::{self, Read, Write};
+use crossterm::event;
+use std::io::Read;
 mod config;
 mod graph;
 use graph::JackGraph;
@@ -25,8 +24,8 @@ pub enum Error {
 
 fn main() {
     let jackclient = initialze_jack().unwrap();
-    let mut stdout = ScreenWrapper::new().unwrap();
-    let mut config: config::LockConfig = std::env::args()
+    let stdout = ui::ScreenWrapper::new().unwrap();
+    let config: config::LockConfig = std::env::args()
         .last()
         .and_then(|path| std::fs::OpenOptions::new().read(true).open(path).ok())
         .and_then(|mut fl| {
@@ -90,66 +89,4 @@ fn main() {
 fn initialze_jack() -> Result<JackClient, Error> {
     let (client, _) = jack::Client::new("Terj", jack::ClientOptions::NO_START_SERVER)?;
     Ok(client)
-}
-
-#[derive(Debug)]
-pub struct ScreenWrapper {
-    stdout: io::Stdout,
-}
-
-impl ScreenWrapper {
-    pub fn new() -> crossterm::Result<Self> {
-        let mut stdout = io::stdout();
-        terminal::enable_raw_mode()?;
-        stdout
-            .queue(event::EnableMouseCapture)?
-            .queue(terminal::EnterAlternateScreen)?
-            .queue(cursor::Hide)?;
-        stdout.flush()?;
-        Ok(Self { stdout })
-    }
-    pub fn fillln(&mut self, fmt: fmt::Arguments<'_>) -> crossterm::Result<()> {
-        self.stdout.write_fmt(fmt)?;
-        let cols = terminal::size()?.0;
-        let cur_col = cursor::position()?.0;
-        let needed = usize::from(cols.saturating_sub(cur_col));
-        eprintln!("{}, {}, {}", cols, cur_col, needed);
-        self.stdout
-            .write_fmt(format_args!("{:n$}", " ", n = needed))?;
-        Ok(())
-    }
-    pub fn writeln(&mut self, fmt: fmt::Arguments<'_>) -> crossterm::Result<()> {
-        self.stdout.write_fmt(fmt)?;
-        self.stdout.execute(cursor::MoveToNextLine(1))?;
-        Ok(())
-    }
-    pub fn clear(&mut self) -> crossterm::Result<()> {
-        self.stdout
-            .queue(terminal::Clear(terminal::ClearType::All))?
-            .queue(cursor::MoveTo(0, 0))?
-            .flush()?;
-        Ok(())
-    }
-}
-
-impl Drop for ScreenWrapper {
-    fn drop(&mut self) {
-        self.stdout.queue(event::DisableMouseCapture).unwrap();
-        self.stdout.queue(cursor::Show).unwrap();
-        self.stdout.queue(terminal::LeaveAlternateScreen).unwrap();
-        self.stdout.flush().unwrap();
-        terminal::disable_raw_mode().unwrap();
-    }
-}
-
-impl io::Write for ScreenWrapper {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stdout.write(buf)
-    }
-    fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
-        self.stdout.write_fmt(fmt)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.stdout.flush()
-    }
 }
