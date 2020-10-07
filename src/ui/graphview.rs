@@ -210,7 +210,7 @@ impl GraphUi {
                     "{}               | -> [{:02}] {} [{}]{}",
                     color_attr,
                     idx,
-                    connection.name.port_shortname(),
+                    connection.name.as_ref(),
                     lockstr,
                     style::Attribute::Reset
                 ))?;
