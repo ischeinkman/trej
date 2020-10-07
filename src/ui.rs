@@ -3,6 +3,8 @@ use crossterm::{terminal, event, cursor, QueueableCommand, ExecutableCommand};
 use std::fmt;
 
 mod graphview;
+mod treepath; 
+use treepath::*;
 
 pub use graphview::*;
 
