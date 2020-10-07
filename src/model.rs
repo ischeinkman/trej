@@ -142,6 +142,13 @@ impl PortCategory {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct PortData {
+    pub name: PortFullname,
+    pub category: PortCategory,
+    pub direction: PortDirection,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
