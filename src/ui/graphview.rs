@@ -2,9 +2,12 @@ use super::ScreenWrapper;
 use crate::config::{LockConfig, LockStatus};
 use crate::graph::JackGraph;
 use crate::model::{PortData, PortDirection};
-use crossterm::{style, terminal};
+use crossterm::{event, style, terminal};
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::HashSet;
+use std::time::Duration;
+
+pub type ShouldShutdown = bool;
 
 #[derive(Debug)]
 pub struct GraphUi {
@@ -15,6 +18,7 @@ pub struct GraphUi {
     current_screen: Vec<TreePath>,
     selected: TreePath,
     scroll_offset: usize,
+    needs_display: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -89,6 +93,7 @@ impl GraphUi {
             current_screen: Vec::with_capacity(64),
             selected: TreePath::Root,
             scroll_offset: 0,
+            needs_display: true,
         }
     }
     fn connection_subrows<'a>(
@@ -148,13 +153,6 @@ impl GraphUi {
         let is_collapsed = args.is_collapsed && args.path().layer() < 3;
         let collapse_marker = if is_collapsed { ">" } else { "v" };
         let idx = args.path().offset_in_layer();
-        eprintln!(
-            "  DR: {:?} == {:?} : {:?}, {:?}",
-            self.selected,
-            args.path(),
-            is_selected,
-            is_collapsed
-        );
         match args.payload() {
             RowPayload::Client { client } => {
                 let lock = self.config.client_status(&client);
@@ -234,8 +232,10 @@ impl GraphUi {
             .map(|r| Ok(r.path()))
             .unwrap_or(Ok(TreePath::Root))
     }
-    #[allow(dead_code)]
     pub fn display(&mut self) -> crossterm::Result<()> {
+        if !self.needs_display {
+            return Ok(());
+        }
         let (_, rows) = terminal::size()?;
         self.current_screen.clear();
         self.output.clear()?;
@@ -248,13 +248,65 @@ impl GraphUi {
             self.current_screen.push(row.path());
             self.display_row(row)?;
         }
+        self.needs_display = false;
         Ok(())
     }
 
-    #[allow(dead_code)]
+    pub fn step(&mut self) -> Result<ShouldShutdown, crate::Error> {
+        if self.needs_display {
+            self.display()?;
+        }
+        if self.graph.needs_update() {
+            self.graph.update()?;
+            self.on_event(GraphUiEvent::Refresh)?;
+        }
+        let evt = if event::poll(Duration::from_millis(0))? {
+            Some(event::read()?)
+        } else {
+            None
+        };
+        match evt {
+            Some(event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Up,
+                ..
+            })) => {
+                eprintln!("Up.");
+                self.on_event(GraphUiEvent::MoveUp).unwrap();
+            }
+            Some(event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Down,
+                ..
+            })) => {
+                eprintln!("Down.");
+                self.on_event(GraphUiEvent::MoveDown).unwrap();
+            }
+            Some(event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Enter,
+                ..
+            }))
+            | Some(event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Char(' '),
+                ..
+            })) => {
+                eprintln!("Select.");
+                self.on_event(GraphUiEvent::ToggleCollapse).unwrap();
+            }
+            Some(event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Char('c'),
+                modifiers: event::KeyModifiers::CONTROL,
+            })) => return Ok(true),
+            Some(other) => {
+                eprintln!("Other: {:?}", other);
+            }
+            None => {}
+        }
+        Ok(false)
+    }
+
     pub fn on_event(&mut self, event: GraphUiEvent) -> Result<(), crate::Error> {
         let cur_idx = self.current_screen.binary_search(&self.selected);
         let (_cols, rows) = terminal::size()?;
+        self.needs_display = true;
         match event {
             GraphUiEvent::MoveUp => match cur_idx {
                 Ok(0) if self.scroll_offset == 0 => {
@@ -275,7 +327,10 @@ impl GraphUi {
             GraphUiEvent::MoveDown => match cur_idx {
                 Ok(n)
                     if (n + 1 >= self.current_screen.len()
-                        && self.current_screen.len() + 4 <= usize::from(rows)) => {}
+                        && self.current_screen.len() + 4 <= usize::from(rows)) =>
+                {
+                    self.needs_display = false;
+                }
                 Ok(n) if n + 1 >= self.current_screen.len() => {
                     self.scroll_offset += 1;
                     let new_selected = self
@@ -301,6 +356,8 @@ impl GraphUi {
                     } else {
                         self.collapsed.insert(self.selected);
                     }
+                } else {
+                    self.needs_display = false;
                 }
             }
             _ => todo!(),
