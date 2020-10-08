@@ -1,7 +1,8 @@
 use crate::model::{NameError, PortCategory, PortData, PortDirection, PortFullname};
 use std::convert::TryFrom;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, TryLockError};
+use std::time::Duration;
 use thiserror::*;
 
 #[derive(Debug, Error)]
@@ -99,6 +100,14 @@ impl JackGraph {
             self.update()?;
             Ok(())
         }
+    }
+
+    pub fn wait_for_update(&self) {
+        self.update_flag.wait_timeout(None);
+    }
+
+    pub fn wait_for_update_timeout(&self, dur: Duration) {
+        self.update_flag.wait_timeout(Some(dur));
     }
 
     pub fn needs_update(&self) -> bool {
@@ -228,16 +237,19 @@ impl JackGraph {
 #[derive(Debug)]
 pub struct Notifier {
     rf: Arc<AtomicBool>,
+    cvar: Arc<(Mutex<()>, Condvar)>,
 }
 
 impl Notifier {
     pub fn new() -> Self {
         Self {
             rf: Arc::new(AtomicBool::new(false)),
+            cvar: Arc::new((Mutex::new(()), Condvar::new())),
         }
     }
     pub fn set(&self) {
         self.rf.store(true, Ordering::Release);
+        self.cvar.1.notify_all();
     }
     pub fn reset(&self) {
         // Need SeqCst b/c we need to gurantee that the graph updating occurs
@@ -255,7 +267,30 @@ impl Notifier {
     pub fn handle(&self) -> Self {
         Self {
             rf: Arc::clone(&self.rf),
+            cvar: Arc::clone(&self.cvar),
         }
+    }
+    pub fn wait_timeout(&self, dur: Option<Duration>) {
+        if self.check() {
+            return;
+        }
+        let (mtx, cvar) = &*self.cvar;
+        let lk = match mtx.try_lock() {
+            Ok(lk) => lk,
+            Err(TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                return;
+            }
+        };
+        let lk = if let Some(dur) = dur {
+            cvar.wait_timeout_while(lk, dur, |_| !self.check())
+                .unwrap_or_else(|e| e.into_inner())
+                .0
+        } else {
+            cvar.wait_while(lk, |_| !self.check())
+                .unwrap_or_else(|e| e.into_inner())
+        };
+        drop(lk);
     }
 }
 

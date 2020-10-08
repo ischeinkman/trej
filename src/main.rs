@@ -22,7 +22,6 @@ pub enum Error {
 
 fn main() {
     let jackclient = initialze_jack().unwrap();
-    let stdout = ui::ScreenWrapper::new().unwrap();
     let config: config::LockConfig = std::env::args()
         .last()
         .and_then(|path| std::fs::OpenOptions::new().read(true).open(path).ok())
@@ -33,14 +32,12 @@ fn main() {
         })
         .and_then(|data| toml::from_str(&data).ok())
         .unwrap_or_default();
-    let grph = JackGraph::new(jackclient).unwrap();
-    let mut gui = ui::GraphUi::new(grph, config, stdout);
+    let mut graph = JackGraph::new(jackclient).unwrap();
     loop {
-        if gui.step().unwrap() {
-            return;
-        }
-        apply_config(&gui.config, &mut gui.graph).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        apply_config(&config, &mut graph).unwrap();
+        graph.wait_for_update();
+        graph.update().unwrap();
+        eprintln!("Wakeup.");
     }
 }
 
@@ -49,7 +46,10 @@ fn initialze_jack() -> Result<JackClient, Error> {
     Ok(client)
 }
 
-fn apply_config(conf: &config::LockConfig, graph: &mut graph::JackGraph) -> Result<(), crate::Error> {
+fn apply_config(
+    conf: &config::LockConfig,
+    graph: &mut graph::JackGraph,
+) -> Result<(), crate::Error> {
     let should_disconnect = graph
         .all_connections()
         .filter(|(a, b)| conf.connection_status(&a.name, &b.name).should_block())
@@ -61,6 +61,7 @@ fn apply_config(conf: &config::LockConfig, graph: &mut graph::JackGraph) -> Resu
         } else {
             (b, a)
         };
+        eprintln!("Disconnect: {:?}, {:?}", src, dst);
         graph.disconnect(&src.name, &dst.name)?;
     }
     for (a, b) in conf.forced_connections() {
@@ -73,6 +74,7 @@ fn apply_config(conf: &config::LockConfig, graph: &mut graph::JackGraph) -> Resu
         } else {
             (b, a)
         };
+        eprintln!("Connect: {:?}, {:?}", src, dst);
         graph.connect(src, dst)?;
     }
     Ok(())

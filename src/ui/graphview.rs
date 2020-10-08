@@ -83,6 +83,7 @@ impl DisplayRowArgs {
 }
 
 impl GraphUi {
+    #[allow(dead_code)]
     pub fn new(graph: JackGraph, config: LockConfig, output: ScreenWrapper) -> Self {
         Self {
             graph,
@@ -251,6 +252,7 @@ impl GraphUi {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn step(&mut self) -> Result<ShouldShutdown, crate::Error> {
         if self.needs_display {
             self.display()?;

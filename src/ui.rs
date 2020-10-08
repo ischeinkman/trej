@@ -14,6 +14,7 @@ pub struct ScreenWrapper {
 }
 
 impl ScreenWrapper {
+    #[allow(dead_code)]
     pub fn new() -> crossterm::Result<Self> {
         let mut stdout = io::stdout();
         terminal::enable_raw_mode()?;
@@ -24,11 +25,13 @@ impl ScreenWrapper {
         stdout.flush()?;
         Ok(Self { stdout })
     }
+    #[allow(dead_code)]
     pub fn writeln(&mut self, fmt: fmt::Arguments<'_>) -> crossterm::Result<()> {
         self.stdout.write_fmt(fmt)?;
         self.stdout.execute(cursor::MoveToNextLine(1))?;
         Ok(())
     }
+    #[allow(dead_code)]
     pub fn clear(&mut self) -> crossterm::Result<()> {
         self.stdout
             .queue(terminal::Clear(terminal::ClearType::All))?
