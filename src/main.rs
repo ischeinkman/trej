@@ -37,7 +37,7 @@ fn main() {
         .unwrap_or_default();
     let mut graph = JackGraph::new(jackclient).unwrap();
     graph.update().unwrap();
-    let mut ui = ui::graphview2::GraphUiState::new(graph, config);
+    let mut ui = ui::GraphUiState::new(graph, config);
     let output = ui::ScreenWrapper::new().unwrap();
     let mut output = tui::Terminal::new(tui::backend::CrosstermBackend::new(output)).unwrap();
     ui.display(&mut output).unwrap();

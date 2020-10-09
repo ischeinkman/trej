@@ -4,7 +4,6 @@ use std::io::{self, Write};
 use std::ops::{Deref, DerefMut};
 
 mod graphview;
-pub mod graphview2;
 mod treepath;
 use treepath::*;
 
