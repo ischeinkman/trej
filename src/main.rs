@@ -18,6 +18,9 @@ pub enum Error {
 
     #[error(transparent)]
     Graph(#[from] graph::GraphError),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 fn main() {
@@ -33,11 +36,21 @@ fn main() {
         .and_then(|data| toml::from_str(&data).ok())
         .unwrap_or_default();
     let mut graph = JackGraph::new(jackclient).unwrap();
+    graph.update().unwrap();
+    let mut ui = ui::graphview2::GraphUiState::new(graph, config);
+    let output = ui::ScreenWrapper::new().unwrap();
+    let mut output = tui::Terminal::new(tui::backend::CrosstermBackend::new(output)).unwrap();
+    ui.display(&mut output).unwrap();
     loop {
-        apply_config(&config, &mut graph).unwrap();
-        graph.wait_for_update();
-        graph.update().unwrap();
-        eprintln!("Wakeup.");
+        apply_config(&ui.conf, &mut ui.graph).unwrap();
+        if ui
+            .step(Some(std::time::Duration::from_millis(1000)), &mut output)
+            .unwrap()
+        {
+            eprintln!("{:?}, Shutting down.", std::time::Instant::now());
+            return;
+        }
+        eprintln!("{:?}, Wakeup.", std::time::Instant::now());
     }
 }
 
@@ -65,10 +78,18 @@ fn apply_config(
         graph.disconnect(&src.name, &dst.name)?;
     }
     for (a, b) in conf.forced_connections() {
+        let adata = match graph.port_by_name(a) {
+            Some(dt) => dt,
+            None => {
+                continue;
+            }
+        };
+        if graph.port_by_name(b).is_none() {
+            continue;
+        }
         if graph.port_connections(a).any(|other| &other.name == b) {
             continue;
         }
-        let adata = graph.port_by_name(a).unwrap();
         let (src, dst) = if adata.direction.is_output() {
             (a, b)
         } else {

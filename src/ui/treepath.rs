@@ -20,6 +20,30 @@ pub enum TreePath {
 }
 
 impl TreePath {
+    pub const fn from_offsets(
+        client_offset: usize,
+        port_offset: usize,
+        connection_offset: usize,
+    ) -> TreePath {
+        let mut cur = TreePath::Root;
+        if client_offset != 0 {
+            cur = cur.nth_child(client_offset - 1);
+        } else {
+            return cur;
+        }
+        if port_offset != 0 {
+            cur = cur.nth_child(port_offset - 1);
+        } else {
+            return cur;
+        }
+        if connection_offset != 0 {
+            cur = cur.nth_child(port_offset - 1);
+        } else {
+            return cur;
+        }
+        cur
+    }
+
     pub const fn client_root(client: usize) -> Self {
         TreePath::Client { client }
     }
@@ -73,6 +97,68 @@ impl TreePath {
             TreePath::Client { .. } => self.client_offset(),
             TreePath::Port { .. } => self.port_offset(),
             TreePath::Connection { .. } => self.connection_offset(),
+        }
+    }
+
+    pub fn next_sibling(&self) -> Option<TreePath> {
+        match *self {
+            TreePath::Root => None,
+            TreePath::Client { client } => {
+                let client = client.checked_add(1)?;
+                Some(TreePath::Client { client })
+            }
+            TreePath::Port { client, port } => {
+                let port = port.checked_add(1)?;
+                Some(TreePath::Port { client, port })
+            }
+
+            TreePath::Connection {
+                client,
+                port,
+                connection,
+            } => {
+                let connection = connection.checked_add(1)?;
+                Some(TreePath::Connection {
+                    client,
+                    port,
+                    connection,
+                })
+            }
+        }
+    }
+    pub fn prev_sibling(&self) -> Option<TreePath> {
+        match *self {
+            TreePath::Root => None,
+            TreePath::Client { client } => {
+                let client = client.checked_sub(1)?;
+                Some(TreePath::Client { client })
+            }
+            TreePath::Port { client, port } => {
+                let port = port.checked_sub(1)?;
+                Some(TreePath::Port { client, port })
+            }
+
+            TreePath::Connection {
+                client,
+                port,
+                connection,
+            } => {
+                let connection = connection.checked_sub(1)?;
+                Some(TreePath::Connection {
+                    client,
+                    port,
+                    connection,
+                })
+            }
+        }
+    }
+
+    pub const fn parent(&self) -> Option<TreePath> {
+        match *self {
+            TreePath::Root => None,
+            TreePath::Client { .. } => Some(TreePath::Root),
+            TreePath::Port { client, .. } => Some(TreePath::Client { client }),
+            TreePath::Connection { client, port, .. } => Some(TreePath::Port { client, port }),
         }
     }
 }

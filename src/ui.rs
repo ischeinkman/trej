@@ -1,9 +1,11 @@
-use std::io::{self, Write};
-use crossterm::{terminal, event, cursor, QueueableCommand, ExecutableCommand};
+use crossterm::{cursor, event, terminal, ExecutableCommand, QueueableCommand};
 use std::fmt;
+use std::io::{self, Write};
+use std::ops::{Deref, DerefMut};
 
 mod graphview;
-mod treepath; 
+pub mod graphview2;
+mod treepath;
 use treepath::*;
 
 pub use graphview::*;
@@ -21,7 +23,9 @@ impl ScreenWrapper {
         stdout
             .queue(event::EnableMouseCapture)?
             .queue(terminal::EnterAlternateScreen)?
-            .queue(cursor::Hide)?;
+            .queue(cursor::Hide)?
+            .queue(terminal::Clear(terminal::ClearType::All))?
+            .queue(cursor::MoveTo(1, 1))?;
         stdout.flush()?;
         Ok(Self { stdout })
     }
@@ -55,10 +59,23 @@ impl io::Write for ScreenWrapper {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.stdout.write(buf)
     }
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdout.flush()
+    }
     fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
         self.stdout.write_fmt(fmt)
     }
-    fn flush(&mut self) -> io::Result<()> {
-        self.stdout.flush()
+}
+
+impl Deref for ScreenWrapper {
+    type Target = io::Stdout;
+    fn deref(&self) -> &Self::Target {
+        &self.stdout
+    }
+}
+
+impl DerefMut for ScreenWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.stdout
     }
 }
