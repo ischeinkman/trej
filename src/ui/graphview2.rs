@@ -1,14 +1,17 @@
 use super::TreePath;
 use crate::config::LockConfig;
 use crate::graph::JackGraph;
+use crate::model::{PortCategory, PortData, PortDirection};
 use crossterm::event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 use tui::backend::Backend;
-use tui::layout::{Constraint, Direction, Layout};
+use tui::layout::{Alignment, Constraint, Direction, Layout};
 use tui::style::{Modifier, Style};
-use tui::text::Span;
-use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState};
+use tui::text::{Span, Spans, Text};
+use tui::widgets::{
+    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap,
+};
 use tui::Terminal;
 
 pub struct GraphUiState {
@@ -55,83 +58,47 @@ impl GraphUiState {
             let selected = self.selected_path();
             let graph = &self.graph;
 
-            let mut client_list = Vec::new();
-            let mut selected_client = None;
-            let mut longest_client = "Clients".len();
-            for (idx, cli) in graph.all_clients().enumerate() {
-                if selected.client_offset() == idx + 1 {
-                    selected_client = Some(cli);
-                }
-                if cli.len() > longest_client {
-                    longest_client = cli.len();
-                }
-                client_list.push(ListItem::new(cli));
-            }
-            let longest_client = longest_client as u16;
+            let (client_list, longest_client, selected_client) = make_list(
+                graph.all_clients(),
+                |a| a,
+                selected.client_offset(),
+                "Clients",
+                false,
+            );
 
-            let client_block = Block::default()
-                .title(Span::styled(
-                    "Clients",
-                    Style::default().add_modifier(Modifier::UNDERLINED),
-                ))
-                .border_type(BorderType::Plain)
-                .borders(Borders::RIGHT);
-            let client_list = List::new(client_list)
-                .block(client_block)
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            let port_itr = selected_client
+                .map(|cli| graph.client_ports(cli))
+                .into_iter()
+                .flatten();
 
-            let mut port_list = Vec::new();
-            let mut selected_port = None;
-            let mut longest_port = "Ports".len();
-            if let Some(cli) = selected_client {
-                for (idx, data) in graph.client_ports(cli).enumerate() {
-                    if selected.port_offset() == idx + 1 {
-                        selected_port = Some(data);
-                    }
-                    let entstr = data.name.port_shortname();
-                    if entstr.len() > longest_port {
-                        longest_port = entstr.len();
-                    }
-                    port_list.push(ListItem::new(entstr));
-                }
-            }
-            let longest_port = longest_port as u16;
-
-            let port_block = Block::default().title(Span::styled(
+            let (port_list, longest_port, selected_port) = make_list(
+                port_itr,
+                |data| data.name.port_shortname(),
+                selected.port_offset(),
                 "Ports",
-                Style::default().add_modifier(Modifier::UNDERLINED),
-            ));
-            let port_list = List::new(port_list)
-                .block(port_block)
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+                false,
+            );
 
-            let mut con_list = Vec::new();
-            let mut _selected_con = None;
-            let mut longest_con = "Connections".len();
-            if let Some(prt) = selected_port {
-                for (idx, data) in graph.port_connections(&prt.name).enumerate() {
-                    if selected.client_offset() == idx + 1 {
-                        _selected_con = Some(data);
-                    }
-                    let entstr = data.name.as_ref();
-                    if entstr.len() > longest_con {
-                        longest_con = entstr.len();
-                    }
-                    con_list.push(ListItem::new(entstr));
-                }
-            }
-            let longest_con = longest_con as u16;
+            let con_itr = selected_port
+                .map(|prt| graph.port_connections(&prt.name))
+                .into_iter()
+                .flatten();
 
-            let con_block = Block::default()
-                .title(Span::styled(
-                    "Connections",
-                    Style::default().add_modifier(Modifier::UNDERLINED),
-                ))
-                .border_type(BorderType::Plain)
-                .borders(Borders::LEFT);
-            let con_list = List::new(con_list)
-                .block(con_block)
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            let (con_list, longest_con, selected_con) = make_list(
+                con_itr,
+                |data| data.name.as_ref(),
+                selected.connection_offset(),
+                "Connections",
+                true,
+            );
+
+            let mut height_resolver = Layout::default()
+                .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
+                .split(f.size());
+
+            let info_rect = height_resolver.pop().unwrap();
+            let list_rect = height_resolver.pop().unwrap();
+
             let mut layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -139,7 +106,7 @@ impl GraphUiState {
                     Constraint::Percentage(33),
                     Constraint::Percentage(33),
                 ])
-                .split(f.size());
+                .split(list_rect);
             let longest_client = longest_client + 1;
             let longest_port = longest_port + 1;
             let longest_con = longest_con + 1;
@@ -148,6 +115,27 @@ impl GraphUiState {
             let con_rect = layout.pop().unwrap();
             let port_rect = layout.pop().unwrap();
             let client_rect = layout.pop().unwrap();
+
+            match (selected_client, selected_port, selected_con) {
+                (None, None, None) => {
+                    let info = make_default_dataview(graph);
+                    f.render_widget(info, info_rect);
+                }
+                (Some(client), None, None) => {
+                    let info = make_client_dataview(graph, client);
+                    f.render_widget(info, info_rect);
+                }
+                (Some(_client), Some(port), None) => {
+                    let info = make_port_dataview(graph, port);
+                    f.render_widget(info, info_rect);
+                }
+                (Some(_client), Some(port_a), Some(port_b)) => {
+                    let info = make_connection_dataview(graph, port_a, port_b);
+                    f.render_widget(info, info_rect);
+                }
+                _ => todo!()
+            }
+
 
             f.render_stateful_widget(client_list, client_rect, &mut self.selected_states.0);
             f.render_stateful_widget(port_list, port_rect, &mut self.selected_states.1);
@@ -332,6 +320,199 @@ pub enum GraphUiEvent {
 }
 
 pub type ShouldShutdown = bool;
+
+fn make_default_dataview(_graph: &JackGraph) -> impl Widget {
+    Paragraph::new("")
+        .block(
+            Block::default()
+                .title("Info")
+                .borders(Borders::all())
+                .border_type(BorderType::Rounded),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false })
+}
+
+fn make_client_dataview(graph: &JackGraph, client_name: &str) -> impl Widget {
+    let (midi_inputs, midi_outputs, audio_inputs, audio_outputs) = graph
+        .client_ports(client_name)
+        .map(|port| match (port.category, port.direction) {
+            (PortCategory::Midi, PortDirection::In) => (1, 0, 0, 0),
+            (PortCategory::Midi, PortDirection::Out) => (0, 1, 0, 0),
+            (PortCategory::Audio, PortDirection::In) => (0, 0, 1, 0),
+            (PortCategory::Audio, PortDirection::Out) => (0, 0, 0, 1),
+            (PortCategory::Unknown, _) => (0, 0, 0, 0),
+        })
+        .fold((0, 0, 0, 0), |acc, cur| {
+            (acc.0 + cur.0, acc.1 + cur.1, acc.2 + cur.2, acc.3 + cur.3)
+        });
+    let client_span = Spans::from(vec![
+        Span::styled("Name: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("\"{}\"", client_name)),
+    ]);
+    let midi_input_span = Spans::from(vec![
+        Span::styled(
+            "Midi Inputs: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{}", midi_inputs)),
+    ]);
+    let midi_output_span = Spans::from(vec![
+        Span::styled(
+            "Midi Outputs: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{}", midi_outputs)),
+    ]);
+    let audio_input_span = Spans::from(vec![
+        Span::styled(
+            "Audio Inputs: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{}", audio_inputs)),
+    ]);
+    let audio_output_span = Spans::from(vec![
+        Span::styled(
+            "Audio Outputs: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{}", audio_outputs)),
+    ]);
+    Paragraph::new(Text::from(vec![
+        client_span,
+        midi_input_span,
+        midi_output_span,
+        audio_input_span,
+        audio_output_span,
+    ]))
+    .block(
+        Block::default()
+            .title("Info")
+            .borders(Borders::all())
+            .border_type(BorderType::Rounded),
+    )
+    .alignment(Alignment::Center)
+    .wrap(Wrap { trim: false })
+}
+
+fn make_port_dataview(_graph: &JackGraph, port: &PortData) -> impl Widget {
+    let client_span = Spans::from(vec![
+        Span::styled("Client: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("\"{}\"", port.name.client_name())),
+    ]);
+    let shortname_span = Spans::from(vec![
+        Span::styled("Name: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("\"{}\"", port.name.port_shortname())),
+    ]);
+
+    let kind = match (port.category, port.direction) {
+        (PortCategory::Audio, PortDirection::In) => "Audio Input",
+        (PortCategory::Audio, PortDirection::Out) => "Audio Output",
+        (PortCategory::Midi, PortDirection::In) => "Midi Input",
+        (PortCategory::Midi, PortDirection::Out) => "Midi Output",
+        (PortCategory::Unknown, PortDirection::In) => "Unknown Input",
+        (PortCategory::Unknown, PortDirection::Out) => "Unknown Output",
+    };
+    let kind_span = Spans::from(vec![
+        Span::styled("Kind: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(kind),
+    ]);
+    Paragraph::new(Text::from(vec![shortname_span, client_span, kind_span]))
+        .block(
+            Block::default()
+                .title("Info")
+                .borders(Borders::all())
+                .border_type(BorderType::Rounded),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false })
+}
+
+fn make_connection_dataview<'a>(
+    _graph: &'a JackGraph,
+    port_a: &'a PortData,
+    port_b: &'a PortData,
+) -> impl Widget + 'a {
+    let (input_port, output_port) = if port_a.direction.is_input() {
+        (port_a, port_b)
+    } else {
+        (port_b, port_a)
+    };
+    let output_span = Spans::from(vec![
+        Span::styled(
+            "Sending Port: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(output_port.name.as_ref()),
+    ]);
+    let input_span = Spans::from(vec![
+        Span::styled(
+            "Receiving Port: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(input_port.name.as_ref()),
+    ]);
+    let data_kind = match port_a.category {
+        PortCategory::Midi => "Midi",
+        PortCategory::Audio => "Audio",
+        PortCategory::Unknown => "Unknown",
+    };
+    let data_span = Spans::from(vec![
+        Span::styled("Data Kind: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(data_kind),
+    ]);
+    Paragraph::new(Text::from(vec![input_span, output_span, data_span]))
+        .block(
+            Block::default()
+                .title("Info")
+                .borders(Borders::all())
+                .border_type(BorderType::Rounded),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false })
+}
+
+fn make_list<'a, Itm, Itr, F, S>(
+    itr: Itr,
+    mapper: F,
+    selected: usize,
+    title: &'a str,
+    last: bool,
+) -> (List, u16, Option<&'a Itm>)
+where
+    Itm: ?Sized + 'a,
+    Itr: Iterator<Item = &'a Itm>,
+    F: FnMut(&'a Itm) -> S,
+    S: Into<Text<'a>>,
+{
+    let mut mapper = mapper;
+    let mut lst = Vec::new();
+    let mut selected_item = None;
+    let mut longest_entry = title.len();
+    for (idx, data) in itr.enumerate() {
+        if selected == idx + 1 {
+            selected_item = Some(data);
+        }
+        let entstr: Text<'a> = mapper(data).into();
+        if entstr.width() > longest_entry {
+            longest_entry = entstr.width();
+        }
+        lst.push(ListItem::new(entstr));
+    }
+    let longest_entry = longest_entry as u16;
+    let border = if last { Borders::NONE } else { Borders::RIGHT };
+    let block = Block::default()
+        .title(Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        ))
+        .border_type(BorderType::Plain)
+        .borders(border);
+    let component = List::new(lst)
+        .block(block)
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+    (component, longest_entry, selected_item)
+}
 
 fn respace_rects(rects: &mut [tui::layout::Rect], minimums: &[u16]) {
     let mut extra_space = 0;
