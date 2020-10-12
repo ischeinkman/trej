@@ -39,15 +39,12 @@ fn main() {
     let mut output = tui::Terminal::new(tui::backend::CrosstermBackend::new(output)).unwrap();
     ui.display(&mut output).unwrap();
     loop {
-        //apply_config(&ui.conf, &mut ui.graph).unwrap();
         if ui
             .step(Some(std::time::Duration::from_millis(1000)), &mut output)
             .unwrap()
         {
-            eprintln!("{:?}, Shutting down.", std::time::Instant::now());
             return;
         }
-        eprintln!("{:?}, Wakeup.", std::time::Instant::now());
     }
 }
 
@@ -136,7 +133,6 @@ impl TrejState {
             } else {
                 (b, a)
             };
-            eprintln!("Disconnect: {:?}, {:?}", src, dst);
             graph.disconnect(&src.name, &dst.name)?;
         }
         for (a, b) in conf.forced_connections() {
@@ -157,7 +153,6 @@ impl TrejState {
             } else {
                 (b, a)
             };
-            eprintln!("Connect: {:?}, {:?}", src, dst);
             graph.connect(src, dst)?;
         }
         Ok(())

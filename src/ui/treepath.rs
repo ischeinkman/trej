@@ -44,10 +44,6 @@ impl TreePath {
         cur
     }
 
-    pub const fn client_root(client: usize) -> Self {
-        TreePath::Client { client }
-    }
-
     pub const fn nth_child(&self, n: usize) -> TreePath {
         match *self {
             TreePath::Root => TreePath::Client { client: n },
@@ -58,15 +54,6 @@ impl TreePath {
                 connection: n,
             },
             TreePath::Connection { .. } => *self,
-        }
-    }
-
-    pub const fn layer(self) -> usize {
-        match self {
-            TreePath::Root => 0,
-            TreePath::Client { .. } => 1,
-            TreePath::Port { .. } => 2,
-            TreePath::Connection { .. } => 3,
         }
     }
 
@@ -88,15 +75,6 @@ impl TreePath {
         match *self {
             TreePath::Root | TreePath::Client { .. } | TreePath::Port { .. } => 0,
             TreePath::Connection { connection, .. } => connection + 1,
-        }
-    }
-
-    pub const fn offset_in_layer(&self) -> usize {
-        match *self {
-            TreePath::Root => 0,
-            TreePath::Client { .. } => self.client_offset(),
-            TreePath::Port { .. } => self.port_offset(),
-            TreePath::Connection { .. } => self.connection_offset(),
         }
     }
 

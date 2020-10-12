@@ -120,22 +120,13 @@ pub enum PortCategory {
 
 impl PortCategory {
     pub const fn is_midi(self) -> bool {
-        match self {
-            PortCategory::Midi => true,
-            _ => false,
-        }
+        matches!(self, PortCategory::Midi)
     }
     pub const fn is_audio(self) -> bool {
-        match self {
-            PortCategory::Audio => true,
-            _ => false,
-        }
+        matches!(self, PortCategory::Audio)
     }
     pub const fn is_unknown(self) -> bool {
-        match self {
-            PortCategory::Unknown => true,
-            _ => false,
-        }
+        matches!(self, PortCategory::Unknown)
     }
 }
 

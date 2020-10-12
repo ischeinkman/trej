@@ -32,12 +32,6 @@ impl GraphUiState {
         }
     }
     fn set_selected_path(&mut self, path: TreePath) {
-        eprintln!(
-            "{:?}, Moving selection {:?} => {:?}",
-            std::time::Instant::now(),
-            self.selected_path(),
-            path
-        );
         let client_state = path.client_offset().checked_sub(1);
         let port_state = path.port_offset().checked_sub(1);
         let connection_state = path.connection_offset().checked_sub(1);
@@ -144,7 +138,6 @@ impl GraphUiState {
 
     pub fn handle_event(&mut self, evt: GraphUiEvent) -> Result<ShouldShutdown, crate::Error> {
         let graph = self.state.graph();
-        eprintln!("{:?}, Got event: {:?}", std::time::Instant::now(), evt);
         match evt {
             GraphUiEvent::Quit => Ok(true),
             GraphUiEvent::MoveUp => {
@@ -185,23 +178,7 @@ impl GraphUiState {
             GraphUiEvent::MoveRight => {
                 let cur = self.selected_path();
                 let nxt = cur.nth_child(0);
-                let nxt = if path_is_valid(graph, nxt) {
-                    eprintln!(
-                        "{:?}, Moveright: trying {:?} => {:?}, SUCCEED",
-                        std::time::Instant::now(),
-                        cur,
-                        nxt
-                    );
-                    nxt
-                } else {
-                    eprintln!(
-                        "{:?}, Moveright: trying {:?} => {:?}, FAILED",
-                        std::time::Instant::now(),
-                        cur,
-                        nxt
-                    );
-                    cur
-                };
+                let nxt = if path_is_valid(graph, nxt) { nxt } else { cur };
                 self.set_selected_path(nxt);
                 Ok(false)
             }
@@ -277,11 +254,11 @@ fn resolve_crossterm_event(raw: event::Event) -> Option<GraphUiEvent> {
             resolve_crossterm_keyevent(code, modifiers)
         }
         event::Event::Mouse(_mouseevent) => {
-            eprintln!("TODO: handle mouse event of {:?}", _mouseevent);
+            //TODO: handle mouse event
             None
         }
         event::Event::Resize(_cols, _rows) => {
-            eprintln!("TODO: handle resize event of {}, {}", _cols, _rows);
+            //TODO: handle resize event
             None
         }
     }
