@@ -1,4 +1,4 @@
-use crate::config::LockConfig;
+use crate::config::{LockConfig, LockStatus};
 use crate::graph::JackGraph;
 use crate::model::{PortCategory, PortData, PortDirection};
 
@@ -16,9 +16,17 @@ pub fn make_default_dataview(_graph: &JackGraph, _conf: &LockConfig) -> impl Wid
 
 pub fn make_client_dataview(
     graph: &JackGraph,
-    _conf: &LockConfig,
+    conf: &LockConfig,
     client_name: &str,
 ) -> impl Widget {
+    let lock = conf.client_status(client_name);
+    let lock_str = match lock {
+        LockStatus::None => "Unlocked",
+        LockStatus::Block => "Blocking New",
+        LockStatus::Force => "Forcing Old",
+        LockStatus::Full => "Locked",
+    };
+    let lock_widget = DataField::new("Lock Status", lock_str);
     let (midi_inputs, midi_outputs, audio_inputs, audio_outputs) = graph
         .client_ports(client_name)
         .map(|port| match (port.category, port.direction) {
@@ -44,10 +52,19 @@ pub fn make_client_dataview(
         midiout_widget,
         audioin_widget,
         audioout_widget,
+        lock_widget,
     ])
 }
 
-pub fn make_port_dataview(_graph: &JackGraph, _conf: &LockConfig, port: &PortData) -> impl Widget {
+pub fn make_port_dataview(_graph: &JackGraph, conf: &LockConfig, port: &PortData) -> impl Widget {
+    let lock = conf.port_status(&port.name);
+    let lock_str = match lock {
+        LockStatus::None => "Unlocked",
+        LockStatus::Block => "Blocking New",
+        LockStatus::Force => "Forcing Old",
+        LockStatus::Full => "Locked",
+    };
+    let lock_widget = DataField::new("Lock Status", lock_str);
     let kind = match (port.category, port.direction) {
         (PortCategory::Audio, PortDirection::In) => "Audio Input",
         (PortCategory::Audio, PortDirection::Out) => "Audio Output",
@@ -61,12 +78,12 @@ pub fn make_port_dataview(_graph: &JackGraph, _conf: &LockConfig, port: &PortDat
     let name_widget = DataField::new("Name", format!("\"{}\"", port.name.port_shortname()));
     let kind_widget = DataField::new("Kind", kind);
 
-    DataviewWidget::new([name_widget, client_widget, kind_widget])
+    DataviewWidget::new([name_widget, client_widget, kind_widget, lock_widget])
 }
 
 pub fn make_connection_dataview<'a>(
     _graph: &'a JackGraph,
-    _conf: &'a LockConfig,
+    conf: &'a LockConfig,
     port_a: &'a PortData,
     port_b: &'a PortData,
 ) -> impl Widget + 'a {
@@ -80,13 +97,21 @@ pub fn make_connection_dataview<'a>(
         PortCategory::Audio => "Audio",
         PortCategory::Unknown => "Unknown",
     };
+    let lock = conf.connection_status(&input_port.name, &output_port.name);
+    let lock_str = match lock {
+        LockStatus::None => "Unlocked",
+        LockStatus::Block => "Unlocked",
+        LockStatus::Force => "Locked",
+        LockStatus::Full => "Locked",
+    };
+    let lock_widget = DataField::new("Lock Status", lock_str);
 
     let output_widget = DataField::new("Sending Port", output_port.name.as_ref());
     let input_widget = DataField::new("Receiving Port", input_port.name.as_ref());
 
     let data_widget = DataField::new("Data Kind", data_kind);
 
-    DataviewWidget::new([output_widget, input_widget, data_widget])
+    DataviewWidget::new([output_widget, input_widget, data_widget, lock_widget])
 }
 
 fn dataview_block<'a>() -> Block<'a> {
