@@ -1,18 +1,18 @@
 use super::TreePath;
 use crate::config::LockConfig;
 use crate::graph::JackGraph;
-use crate::model::{PortCategory, PortData, PortDirection};
 use crossterm::event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 use tui::backend::Backend;
-use tui::layout::{Alignment, Constraint, Direction, Layout};
+use tui::layout::{Constraint, Direction, Layout};
 use tui::style::{Modifier, Style};
-use tui::text::{Span, Spans, Text};
-use tui::widgets::{
-    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap,
-};
+use tui::text::{Span, Text};
+use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState};
 use tui::Terminal;
+
+mod datapanel;
+use datapanel::*;
 
 pub struct GraphUiState {
     pub graph: JackGraph,
@@ -57,6 +57,7 @@ impl GraphUiState {
         output.draw(|f| {
             let selected = self.selected_path();
             let graph = &self.graph;
+            let conf = &self.conf;
 
             let (client_list, longest_client, selected_client) = make_list(
                 graph.all_clients(),
@@ -118,24 +119,23 @@ impl GraphUiState {
 
             match (selected_client, selected_port, selected_con) {
                 (None, None, None) => {
-                    let info = make_default_dataview(graph);
+                    let info = make_default_dataview(graph, conf);
                     f.render_widget(info, info_rect);
                 }
                 (Some(client), None, None) => {
-                    let info = make_client_dataview(graph, client);
+                    let info = make_client_dataview(graph, conf, client);
                     f.render_widget(info, info_rect);
                 }
                 (Some(_client), Some(port), None) => {
-                    let info = make_port_dataview(graph, port);
+                    let info = make_port_dataview(graph, conf, port);
                     f.render_widget(info, info_rect);
                 }
                 (Some(_client), Some(port_a), Some(port_b)) => {
-                    let info = make_connection_dataview(graph, port_a, port_b);
+                    let info = make_connection_dataview(graph, conf, port_a, port_b);
                     f.render_widget(info, info_rect);
                 }
-                _ => todo!()
+                _ => todo!(),
             }
-
 
             f.render_stateful_widget(client_list, client_rect, &mut self.selected_states.0);
             f.render_stateful_widget(port_list, port_rect, &mut self.selected_states.1);
@@ -320,157 +320,6 @@ pub enum GraphUiEvent {
 }
 
 pub type ShouldShutdown = bool;
-
-fn make_default_dataview(_graph: &JackGraph) -> impl Widget {
-    Paragraph::new("")
-        .block(
-            Block::default()
-                .title("Info")
-                .borders(Borders::all())
-                .border_type(BorderType::Rounded),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false })
-}
-
-fn make_client_dataview(graph: &JackGraph, client_name: &str) -> impl Widget {
-    let (midi_inputs, midi_outputs, audio_inputs, audio_outputs) = graph
-        .client_ports(client_name)
-        .map(|port| match (port.category, port.direction) {
-            (PortCategory::Midi, PortDirection::In) => (1, 0, 0, 0),
-            (PortCategory::Midi, PortDirection::Out) => (0, 1, 0, 0),
-            (PortCategory::Audio, PortDirection::In) => (0, 0, 1, 0),
-            (PortCategory::Audio, PortDirection::Out) => (0, 0, 0, 1),
-            (PortCategory::Unknown, _) => (0, 0, 0, 0),
-        })
-        .fold((0, 0, 0, 0), |acc, cur| {
-            (acc.0 + cur.0, acc.1 + cur.1, acc.2 + cur.2, acc.3 + cur.3)
-        });
-    let client_span = Spans::from(vec![
-        Span::styled("Name: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!("\"{}\"", client_name)),
-    ]);
-    let midi_input_span = Spans::from(vec![
-        Span::styled(
-            "Midi Inputs: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!("{}", midi_inputs)),
-    ]);
-    let midi_output_span = Spans::from(vec![
-        Span::styled(
-            "Midi Outputs: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!("{}", midi_outputs)),
-    ]);
-    let audio_input_span = Spans::from(vec![
-        Span::styled(
-            "Audio Inputs: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!("{}", audio_inputs)),
-    ]);
-    let audio_output_span = Spans::from(vec![
-        Span::styled(
-            "Audio Outputs: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!("{}", audio_outputs)),
-    ]);
-    Paragraph::new(Text::from(vec![
-        client_span,
-        midi_input_span,
-        midi_output_span,
-        audio_input_span,
-        audio_output_span,
-    ]))
-    .block(
-        Block::default()
-            .title("Info")
-            .borders(Borders::all())
-            .border_type(BorderType::Rounded),
-    )
-    .alignment(Alignment::Center)
-    .wrap(Wrap { trim: false })
-}
-
-fn make_port_dataview(_graph: &JackGraph, port: &PortData) -> impl Widget {
-    let client_span = Spans::from(vec![
-        Span::styled("Client: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!("\"{}\"", port.name.client_name())),
-    ]);
-    let shortname_span = Spans::from(vec![
-        Span::styled("Name: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!("\"{}\"", port.name.port_shortname())),
-    ]);
-
-    let kind = match (port.category, port.direction) {
-        (PortCategory::Audio, PortDirection::In) => "Audio Input",
-        (PortCategory::Audio, PortDirection::Out) => "Audio Output",
-        (PortCategory::Midi, PortDirection::In) => "Midi Input",
-        (PortCategory::Midi, PortDirection::Out) => "Midi Output",
-        (PortCategory::Unknown, PortDirection::In) => "Unknown Input",
-        (PortCategory::Unknown, PortDirection::Out) => "Unknown Output",
-    };
-    let kind_span = Spans::from(vec![
-        Span::styled("Kind: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(kind),
-    ]);
-    Paragraph::new(Text::from(vec![shortname_span, client_span, kind_span]))
-        .block(
-            Block::default()
-                .title("Info")
-                .borders(Borders::all())
-                .border_type(BorderType::Rounded),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false })
-}
-
-fn make_connection_dataview<'a>(
-    _graph: &'a JackGraph,
-    port_a: &'a PortData,
-    port_b: &'a PortData,
-) -> impl Widget + 'a {
-    let (input_port, output_port) = if port_a.direction.is_input() {
-        (port_a, port_b)
-    } else {
-        (port_b, port_a)
-    };
-    let output_span = Spans::from(vec![
-        Span::styled(
-            "Sending Port: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(output_port.name.as_ref()),
-    ]);
-    let input_span = Spans::from(vec![
-        Span::styled(
-            "Receiving Port: ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(input_port.name.as_ref()),
-    ]);
-    let data_kind = match port_a.category {
-        PortCategory::Midi => "Midi",
-        PortCategory::Audio => "Audio",
-        PortCategory::Unknown => "Unknown",
-    };
-    let data_span = Spans::from(vec![
-        Span::styled("Data Kind: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(data_kind),
-    ]);
-    Paragraph::new(Text::from(vec![input_span, output_span, data_span]))
-        .block(
-            Block::default()
-                .title("Info")
-                .borders(Borders::all())
-                .border_type(BorderType::Rounded),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false })
-}
 
 fn make_list<'a, Itm, Itr, F, S>(
     itr: Itr,
