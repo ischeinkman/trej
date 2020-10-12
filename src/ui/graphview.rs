@@ -1,6 +1,6 @@
 use super::TreePath;
-use crate::config::LockConfig;
 use crate::graph::JackGraph;
+use crate::TrejState;
 use crossterm::event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
@@ -15,21 +15,19 @@ mod datapanel;
 use datapanel::*;
 
 pub struct GraphUiState {
-    pub graph: JackGraph,
-    pub conf: LockConfig,
+    state: TrejState,
     selected_states: (ListState, ListState, ListState),
 }
 
 impl GraphUiState {
-    pub fn new(graph: JackGraph, conf: LockConfig) -> Self {
+    pub fn new(state: TrejState) -> Self {
         let selected_states = (
             ListState::default(),
             ListState::default(),
             ListState::default(),
         );
         Self {
-            graph,
-            conf,
+            state,
             selected_states,
         }
     }
@@ -56,8 +54,8 @@ impl GraphUiState {
     pub fn display<B: Backend>(&mut self, output: &mut Terminal<B>) -> Result<(), crate::Error> {
         output.draw(|f| {
             let selected = self.selected_path();
-            let graph = &self.graph;
-            let conf = &self.conf;
+            let graph = self.state.graph();
+            let conf = self.state.config();
 
             let (client_list, longest_client, selected_client) = make_list(
                 graph.all_clients(),
@@ -145,6 +143,7 @@ impl GraphUiState {
     }
 
     pub fn handle_event(&mut self, evt: GraphUiEvent) -> Result<ShouldShutdown, crate::Error> {
+        let graph = self.state.graph();
         eprintln!("{:?}, Got event: {:?}", std::time::Instant::now(), evt);
         match evt {
             GraphUiEvent::Quit => Ok(true),
@@ -152,7 +151,7 @@ impl GraphUiState {
                 let cur = self.selected_path();
                 let mut nxt = cur
                     .prev_sibling()
-                    .filter(|path| path_is_valid(&self.graph, *path))
+                    .filter(|path| path_is_valid(graph, *path))
                     .or_else(|| cur.parent())
                     .unwrap_or(TreePath::Root);
                 if cur == TreePath::Root && nxt == TreePath::Root {
@@ -165,7 +164,7 @@ impl GraphUiState {
                 let cur = self.selected_path();
                 let mut nxt = cur
                     .next_sibling()
-                    .filter(|path| path_is_valid(&self.graph, *path))
+                    .filter(|path| path_is_valid(graph, *path))
                     .or_else(|| cur.parent())
                     .unwrap_or(TreePath::Root);
                 if cur == TreePath::Root && nxt == TreePath::Root {
@@ -178,7 +177,7 @@ impl GraphUiState {
                 let cur = self.selected_path();
                 let nxt = cur
                     .parent()
-                    .filter(|path| path_is_valid(&self.graph, *path))
+                    .filter(|path| path_is_valid(graph, *path))
                     .unwrap_or(TreePath::Root);
                 self.set_selected_path(nxt);
                 Ok(false)
@@ -186,7 +185,7 @@ impl GraphUiState {
             GraphUiEvent::MoveRight => {
                 let cur = self.selected_path();
                 let nxt = cur.nth_child(0);
-                let nxt = if path_is_valid(&self.graph, nxt) {
+                let nxt = if path_is_valid(graph, nxt) {
                     eprintln!(
                         "{:?}, Moveright: trying {:?} => {:?}, SUCCEED",
                         std::time::Instant::now(),
@@ -207,7 +206,7 @@ impl GraphUiState {
                 Ok(false)
             }
             GraphUiEvent::Refresh => {
-                self.graph.update()?;
+                self.state.reload()?;
                 Ok(false)
             }
         }
@@ -217,7 +216,8 @@ impl GraphUiState {
         &mut self,
         timeout: Option<Duration>,
     ) -> Result<Option<GraphUiEvent>, crate::Error> {
-        if self.graph.needs_update() {
+        let graph = self.state.graph();
+        if graph.needs_update() {
             return Ok(Some(GraphUiEvent::Refresh));
         }
         let ui_poll_res = event::poll(timeout.unwrap_or_else(|| Duration::from_micros(0)));
@@ -227,7 +227,7 @@ impl GraphUiState {
         });
         match ui_evt_res {
             Ok(Some(raw_evt)) => Ok(resolve_crossterm_event(raw_evt)),
-            Ok(None) if self.graph.needs_update() => Ok(Some(GraphUiEvent::Refresh)),
+            Ok(None) if graph.needs_update() => Ok(Some(GraphUiEvent::Refresh)),
             Ok(None) => Ok(None),
             Err(e) => Err(e.into()),
         }
