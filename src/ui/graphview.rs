@@ -14,12 +14,12 @@ use datapanel::*;
 mod jacktree;
 use jacktree::*;
 
-pub struct GraphUiState {
+pub struct GraphView {
     state: TrejState,
     tree_state: JackTreeState,
 }
 
-impl GraphUiState {
+impl GraphView {
     pub fn new(state: TrejState) -> Self {
         let tree_state = JackTreeState::default();
         Self { state, tree_state }
@@ -45,37 +45,8 @@ impl GraphUiState {
             let list_rect = height_resolver.pop().unwrap();
             f.render_stateful_widget(JackTree::new(graph), list_rect, tree_state);
 
-            let selected_client = selected
-                .client_offset()
-                .checked_sub(1)
-                .and_then(|n| graph.all_clients().nth(n));
-            let selected_port = selected_client
-                .as_ref()
-                .zip(selected.port_offset().checked_sub(1))
-                .and_then(|(cli, n)| graph.client_ports(cli).nth(n));
-            let selected_con = selected_port
-                .as_ref()
-                .zip(selected.connection_offset().checked_sub(1))
-                .and_then(|(port, n)| graph.port_connections(&port.name).nth(n));
-            match (selected_client, selected_port, selected_con) {
-                (None, None, None) => {
-                    let info = make_default_dataview(graph, conf);
-                    f.render_widget(info, info_rect);
-                }
-                (Some(client), None, None) => {
-                    let info = make_client_dataview(graph, conf, client);
-                    f.render_widget(info, info_rect);
-                }
-                (Some(_client), Some(port), None) => {
-                    let info = make_port_dataview(graph, conf, port);
-                    f.render_widget(info, info_rect);
-                }
-                (Some(_client), Some(port_a), Some(port_b)) => {
-                    let info = make_connection_dataview(graph, conf, port_a, port_b);
-                    f.render_widget(info, info_rect);
-                }
-                _ => unreachable!("All lower tree nodes should be attached to a higher node."),
-            }
+            let dataview = make_dataview(selected, graph, conf);
+            f.render_widget(dataview, info_rect);
         })?;
         Ok(())
     }

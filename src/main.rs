@@ -34,7 +34,7 @@ fn main() {
         Some(config) => TrejState::load_file(config).unwrap(),
         None => TrejState::load_no_config().unwrap(),
     };
-    let mut ui = ui::GraphUiState::new(state);
+    let mut ui = ui::GraphView::new(state);
     let output = ui::ScreenWrapper::new().unwrap();
     let mut output = tui::Terminal::new(tui::backend::CrosstermBackend::new(output)).unwrap();
     ui.display(&mut output).unwrap();

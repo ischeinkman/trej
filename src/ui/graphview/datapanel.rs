@@ -10,15 +10,50 @@ use tui::style::{Modifier, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, Widget};
 
-pub fn make_default_dataview(_graph: &JackGraph, _conf: &LockConfig) -> impl Widget {
+/// Used to wrap the field list on the dataview in a generic way
+/// so that `make_dataview` returns a single unified type no matter
+/// the number of fields per dataview kind.
+enum ArrayWrapper<DefaultArr, ClientArr, PortArr, ConArr> {
+    Default(DefaultArr),
+    Client(ClientArr),
+    Port(PortArr),
+    Con(ConArr),
+}
+
+impl<DefaultArr, ClientArr, PortArr, ConArr> ArrayWrapper<DefaultArr, ClientArr, PortArr, ConArr> {}
+
+impl<T, DefaultArr, ClientArr, PortArr, ConArr> AsRef<[T]>
+    for ArrayWrapper<DefaultArr, ClientArr, PortArr, ConArr>
+where
+    DefaultArr: AsRef<[T]>,
+    ClientArr: AsRef<[T]>,
+    PortArr: AsRef<[T]>,
+    ConArr: AsRef<[T]>,
+{
+    fn as_ref(&self) -> &[T] {
+        match self {
+            ArrayWrapper::Default(a) => a.as_ref(),
+            ArrayWrapper::Client(a) => a.as_ref(),
+            ArrayWrapper::Port(a) => a.as_ref(),
+            ArrayWrapper::Con(a) => a.as_ref(),
+        }
+    }
+}
+
+/// Makes the default, root-level data view panel.
+fn make_default_dataview<'a>(
+    _graph: &JackGraph,
+    _conf: &LockConfig,
+) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
     DataviewWidget::new([])
 }
 
-pub fn make_client_dataview(
+/// Makes the data view panel for a JACK Client. 
+fn make_client_dataview<'a>(
     graph: &JackGraph,
     conf: &LockConfig,
     client_name: &str,
-) -> impl Widget {
+) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
     let lock = conf.client_status(client_name);
     let lock_str = match lock {
         LockStatus::None => "Unlocked",
@@ -56,7 +91,12 @@ pub fn make_client_dataview(
     ])
 }
 
-pub fn make_port_dataview(_graph: &JackGraph, conf: &LockConfig, port: &PortData) -> impl Widget {
+/// Makes the data view panel for a JACK Port. 
+fn make_port_dataview<'a>(
+    _graph: &JackGraph,
+    conf: &LockConfig,
+    port: &PortData,
+) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
     let lock = conf.port_status(&port.name);
     let lock_str = match lock {
         LockStatus::None => "Unlocked",
@@ -81,12 +121,13 @@ pub fn make_port_dataview(_graph: &JackGraph, conf: &LockConfig, port: &PortData
     DataviewWidget::new([name_widget, client_widget, kind_widget, lock_widget])
 }
 
-pub fn make_connection_dataview<'a>(
+/// Makes the data view panel for a connection between two ports.  
+fn make_connection_dataview<'a>(
     _graph: &'a JackGraph,
     conf: &'a LockConfig,
     port_a: &'a PortData,
     port_b: &'a PortData,
-) -> impl Widget + 'a {
+) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
     let (input_port, output_port) = if port_a.direction.is_input() {
         (port_a, port_b)
     } else {
@@ -114,6 +155,8 @@ pub fn make_connection_dataview<'a>(
     DataviewWidget::new([output_widget, input_widget, data_widget, lock_widget])
 }
 
+
+/// Makes the `Block` that wraps the data view panel.
 fn dataview_block<'a>() -> Block<'a> {
     Block::default()
         .title("Info")
@@ -121,28 +164,7 @@ fn dataview_block<'a>() -> Block<'a> {
         .border_type(BorderType::Rounded)
 }
 
-pub struct DataField<'a> {
-    name: Cow<'a, str>,
-    value: Cow<'a, str>,
-}
-
-impl<'a> DataField<'a> {
-    pub fn new<A: Into<Cow<'a, str>>, B: Into<Cow<'a, str>>>(name: A, value: B) -> Self {
-        let name = name.into();
-        let value = value.into();
-        Self { name, value }
-    }
-    pub fn name_width(&self) -> usize {
-        let name = Cow::Borrowed(&*self.name);
-        Span::raw(name).width()
-    }
-    pub fn value_width(&self) -> usize {
-        let value = Cow::Borrowed(&*self.value);
-        Span::raw(value).width()
-    }
-}
-
-pub struct DataviewWidget<'a, T: AsRef<[DataField<'a>]> + 'a> {
+pub struct DataviewWidget<'a, T> {
     block: Block<'a>,
     name_style: Style,
     value_style: Style,
@@ -160,6 +182,62 @@ impl<'a, T: AsRef<[DataField<'a>]> + 'a> DataviewWidget<'a, T> {
             fields,
         }
     }
+
+    /// Maps the inner `fields` type using the provided mapper.
+    /// Mainly used in `make_dataview` to wrap the `fields` list
+    /// in an `ArrayWrapper`, which means we can unify all field
+    /// list counts into a single enum without having to specify it.
+    fn map_items<U, F>(self, mapper: F) -> DataviewWidget<'a, U>
+    where
+        U: AsRef<[DataField<'a>]> + 'a,
+        F: FnOnce(T) -> U,
+    {
+        DataviewWidget {
+            fields: (mapper)(self.fields),
+            block: self.block,
+            name_style: self.name_style,
+            value_style: self.value_style,
+            margins: self.margins,
+        }
+    }
+}
+
+pub fn make_dataview<'a>(
+    path: super::TreePath,
+    graph: &'a JackGraph,
+    conf: &'a LockConfig,
+) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
+    let res = match path {
+        super::TreePath::Root => {
+            make_default_dataview(graph, conf).map_items(ArrayWrapper::Default)
+        }
+        super::TreePath::Client { client } => {
+            let client_name = graph.all_clients().nth(client).unwrap();
+            make_client_dataview(graph, conf, client_name).map_items(ArrayWrapper::Client)
+        }
+        super::TreePath::Port { client, port } => {
+            let client_name = graph.all_clients().nth(client);
+            let port = client_name
+                .and_then(|c| graph.client_ports(c).nth(port))
+                .unwrap();
+            make_port_dataview(graph, conf, port).map_items(ArrayWrapper::Port)
+        }
+        super::TreePath::Connection {
+            client,
+            port,
+            connection,
+        } => {
+            let client_name = graph.all_clients().nth(client);
+            let port = client_name.and_then(move |c| graph.client_ports(c).nth(port));
+            let con = port
+                .as_ref()
+                .and_then(move |p| graph.port_connections(&p.name).nth(connection));
+
+            let (port_a, port_b) = port.zip(con).unwrap();
+            make_connection_dataview(graph, conf, port_a, port_b).map_items(ArrayWrapper::Con)
+        }
+    };
+    res
 }
 
 impl<'a, T: AsRef<[DataField<'a>]> + 'a> Widget for DataviewWidget<'a, T> {
@@ -229,11 +307,30 @@ impl<'a, T: AsRef<[DataField<'a>]> + 'a> Widget for DataviewWidget<'a, T> {
             );
         List::new(name_items)
             .start_corner(Corner::TopLeft)
-            //.block(Block::default().borders(Borders::all()))
             .render(name_rect, buf);
         List::new(value_items)
             .start_corner(Corner::BottomRight)
-            //.block(Block::default().borders(Borders::all()))
             .render(value_rect, buf);
+    }
+}
+
+pub struct DataField<'a> {
+    name: Cow<'a, str>,
+    value: Cow<'a, str>,
+}
+
+impl<'a> DataField<'a> {
+    pub fn new<A: Into<Cow<'a, str>>, B: Into<Cow<'a, str>>>(name: A, value: B) -> Self {
+        let name = name.into();
+        let value = value.into();
+        Self { name, value }
+    }
+    pub fn name_width(&self) -> usize {
+        let name = Cow::Borrowed(&*self.name);
+        Span::raw(name).width()
+    }
+    pub fn value_width(&self) -> usize {
+        let value = Cow::Borrowed(&*self.value);
+        Span::raw(value).width()
     }
 }
