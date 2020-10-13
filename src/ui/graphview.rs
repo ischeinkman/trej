@@ -5,85 +5,37 @@ use crossterm::event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 use tui::backend::Backend;
-use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Modifier, Style};
-use tui::text::{Span, Text};
-use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState};
+use tui::layout::{Constraint, Layout};
 use tui::Terminal;
 
 mod datapanel;
 use datapanel::*;
 
+mod jacktree;
+use jacktree::*;
+
 pub struct GraphUiState {
     state: TrejState,
-    selected_states: (ListState, ListState, ListState),
+    tree_state: JackTreeState,
 }
 
 impl GraphUiState {
     pub fn new(state: TrejState) -> Self {
-        let selected_states = (
-            ListState::default(),
-            ListState::default(),
-            ListState::default(),
-        );
-        Self {
-            state,
-            selected_states,
-        }
+        let tree_state = JackTreeState::default();
+        Self { state, tree_state }
     }
     fn set_selected_path(&mut self, path: TreePath) {
-        let client_state = path.client_offset().checked_sub(1);
-        let port_state = path.port_offset().checked_sub(1);
-        let connection_state = path.connection_offset().checked_sub(1);
-        self.selected_states.0.select(client_state);
-        self.selected_states.1.select(port_state);
-        self.selected_states.2.select(connection_state);
+        self.tree_state.select(path);
     }
     fn selected_path(&self) -> TreePath {
-        let client_offset = self.selected_states.0.selected().map_or(0, |n| n + 1);
-        let port_offset = self.selected_states.1.selected().map_or(0, |n| n + 1);
-        let connection_offset = self.selected_states.2.selected().map_or(0, |n| n + 1);
-        TreePath::from_offsets(client_offset, port_offset, connection_offset)
+        self.tree_state.selected()
     }
     pub fn display<B: Backend>(&mut self, output: &mut Terminal<B>) -> Result<(), crate::Error> {
         output.draw(|f| {
             let selected = self.selected_path();
             let graph = self.state.graph();
             let conf = self.state.config();
-
-            let (client_list, longest_client, selected_client) = make_list(
-                graph.all_clients(),
-                |a| a,
-                selected.client_offset(),
-                "Clients",
-                false,
-            );
-
-            let port_itr = selected_client
-                .map(|cli| graph.client_ports(cli))
-                .into_iter()
-                .flatten();
-
-            let (port_list, longest_port, selected_port) = make_list(
-                port_itr,
-                |data| data.name.port_shortname(),
-                selected.port_offset(),
-                "Ports",
-                false,
-            );
-
-            let con_itr = selected_port
-                .map(|prt| graph.port_connections(&prt.name))
-                .into_iter()
-                .flatten();
-
-            let (con_list, longest_con, selected_con) = make_list(
-                con_itr,
-                |data| data.name.as_ref(),
-                selected.connection_offset(),
-                "Connections",
-                true,
-            );
+            let tree_state = &mut self.tree_state;
 
             let mut height_resolver = Layout::default()
                 .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
@@ -91,24 +43,20 @@ impl GraphUiState {
 
             let info_rect = height_resolver.pop().unwrap();
             let list_rect = height_resolver.pop().unwrap();
+            f.render_stateful_widget(JackTree::new(graph), list_rect, tree_state);
 
-            let mut layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
-                ])
-                .split(list_rect);
-            let longest_client = longest_client + 1;
-            let longest_port = longest_port + 1;
-            let longest_con = longest_con + 1;
-            respace_rects(&mut layout, &[longest_client, longest_port, longest_con]);
-
-            let con_rect = layout.pop().unwrap();
-            let port_rect = layout.pop().unwrap();
-            let client_rect = layout.pop().unwrap();
-
+            let selected_client = selected
+                .client_offset()
+                .checked_sub(1)
+                .and_then(|n| graph.all_clients().nth(n));
+            let selected_port = selected_client
+                .as_ref()
+                .zip(selected.port_offset().checked_sub(1))
+                .and_then(|(cli, n)| graph.client_ports(cli).nth(n));
+            let selected_con = selected_port
+                .as_ref()
+                .zip(selected.connection_offset().checked_sub(1))
+                .and_then(|(port, n)| graph.port_connections(&port.name).nth(n));
             match (selected_client, selected_port, selected_con) {
                 (None, None, None) => {
                     let info = make_default_dataview(graph, conf);
@@ -126,12 +74,8 @@ impl GraphUiState {
                     let info = make_connection_dataview(graph, conf, port_a, port_b);
                     f.render_widget(info, info_rect);
                 }
-                _ => todo!(),
+                _ => unreachable!("All lower tree nodes should be attached to a higher node."),
             }
-
-            f.render_stateful_widget(client_list, client_rect, &mut self.selected_states.0);
-            f.render_stateful_widget(port_list, port_rect, &mut self.selected_states.1);
-            f.render_stateful_widget(con_list, con_rect, &mut self.selected_states.2);
         })?;
         Ok(())
     }
@@ -297,93 +241,3 @@ pub enum GraphUiEvent {
 }
 
 pub type ShouldShutdown = bool;
-
-fn make_list<'a, Itm, Itr, F, S>(
-    itr: Itr,
-    mapper: F,
-    selected: usize,
-    title: &'a str,
-    last: bool,
-) -> (List, u16, Option<&'a Itm>)
-where
-    Itm: ?Sized + 'a,
-    Itr: Iterator<Item = &'a Itm>,
-    F: FnMut(&'a Itm) -> S,
-    S: Into<Text<'a>>,
-{
-    let mut mapper = mapper;
-    let mut lst = Vec::new();
-    let mut selected_item = None;
-    let mut longest_entry = title.len();
-    for (idx, data) in itr.enumerate() {
-        if selected == idx + 1 {
-            selected_item = Some(data);
-        }
-        let entstr: Text<'a> = mapper(data).into();
-        if entstr.width() > longest_entry {
-            longest_entry = entstr.width();
-        }
-        lst.push(ListItem::new(entstr));
-    }
-    let longest_entry = longest_entry as u16;
-    let border = if last { Borders::NONE } else { Borders::RIGHT };
-    let block = Block::default()
-        .title(Span::styled(
-            title,
-            Style::default().add_modifier(Modifier::UNDERLINED),
-        ))
-        .border_type(BorderType::Plain)
-        .borders(border);
-    let component = List::new(lst)
-        .block(block)
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
-    (component, longest_entry, selected_item)
-}
-
-fn respace_rects(rects: &mut [tui::layout::Rect], minimums: &[u16]) {
-    let mut extra_space = 0;
-    // Collect all the extra space
-    for idx in 0..rects.len() {
-        let min_len = minimums.get(idx).copied().unwrap_or_else(u16::max_value);
-        let cur_rect = rects.get_mut(idx).unwrap();
-        if cur_rect.width <= min_len {
-            continue;
-        }
-        let diff = cur_rect.width.saturating_sub(min_len);
-        cur_rect.width = min_len;
-        for next_rect in rects.iter_mut().skip(idx + 1) {
-            next_rect.x -= diff;
-        }
-        extra_space += diff;
-    }
-
-    // Distribute the minimums
-    let mut finished = false;
-    while extra_space > 0 && !finished {
-        finished = true;
-        for idx in 0..rects.len() {
-            let cur_rect = rects.get_mut(idx).unwrap();
-            let cur_min = minimums.get(idx).copied().unwrap_or(0);
-            let needed = cur_min.saturating_sub(cur_rect.width);
-            if needed == 0 {
-                continue;
-            }
-
-            let to_add = extra_space.min(needed);
-            cur_rect.width += to_add;
-            if cur_rect.width < cur_min {
-                finished = false;
-            }
-            for next_rect in rects.iter_mut().skip(idx + 1) {
-                next_rect.x += to_add;
-            }
-            extra_space -= to_add;
-            if extra_space == 0 {
-                break;
-            }
-        }
-    }
-
-    // Distribute the extra
-    rects.last_mut().unwrap().width += extra_space;
-}
