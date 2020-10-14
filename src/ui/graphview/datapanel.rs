@@ -48,7 +48,7 @@ fn make_default_dataview<'a>(
     DataviewWidget::new([])
 }
 
-/// Makes the data view panel for a JACK Client. 
+/// Makes the data view panel for a JACK Client.
 fn make_client_dataview<'a>(
     graph: &JackGraph,
     conf: &LockConfig,
@@ -91,7 +91,7 @@ fn make_client_dataview<'a>(
     ])
 }
 
-/// Makes the data view panel for a JACK Port. 
+/// Makes the data view panel for a JACK Port.
 fn make_port_dataview<'a>(
     _graph: &JackGraph,
     conf: &LockConfig,
@@ -155,7 +155,6 @@ fn make_connection_dataview<'a>(
     DataviewWidget::new([output_widget, input_widget, data_widget, lock_widget])
 }
 
-
 /// Makes the `Block` that wraps the data view panel.
 fn dataview_block<'a>() -> Block<'a> {
     Block::default()
@@ -207,37 +206,42 @@ pub fn make_dataview<'a>(
     graph: &'a JackGraph,
     conf: &'a LockConfig,
 ) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
-    let res = match path {
-        super::TreePath::Root => {
-            make_default_dataview(graph, conf).map_items(ArrayWrapper::Default)
-        }
-        super::TreePath::Client { client } => {
-            let client_name = graph.all_clients().nth(client).unwrap();
-            make_client_dataview(graph, conf, client_name).map_items(ArrayWrapper::Client)
-        }
-        super::TreePath::Port { client, port } => {
-            let client_name = graph.all_clients().nth(client);
-            let port = client_name
-                .and_then(|c| graph.client_ports(c).nth(port))
-                .unwrap();
-            make_port_dataview(graph, conf, port).map_items(ArrayWrapper::Port)
-        }
-        super::TreePath::Connection {
-            client,
-            port,
-            connection,
-        } => {
-            let client_name = graph.all_clients().nth(client);
-            let port = client_name.and_then(move |c| graph.client_ports(c).nth(port));
-            let con = port
-                .as_ref()
-                .and_then(move |p| graph.port_connections(&p.name).nth(connection));
-
-            let (port_a, port_b) = port.zip(con).unwrap();
-            make_connection_dataview(graph, conf, port_a, port_b).map_items(ArrayWrapper::Con)
-        }
+    macro_rules! unwrap_or_ret {
+        ($itm:expr, $ret:expr) => {{
+            match $itm {
+                Some(val) => val,
+                None => {
+                    return $ret;
+                }
+            }
+        }};
     };
-    res
+
+    let client_name = path
+        .client_idx()
+        .map(|n| graph.all_clients().nth(n).unwrap());
+
+    let client_name = unwrap_or_ret!(
+        client_name,
+        make_default_dataview(graph, conf).map_items(ArrayWrapper::Default)
+    );
+
+    let port_data = path
+        .port_idx()
+        .map(|n| graph.client_ports(client_name).nth(n).unwrap());
+    let port_data = unwrap_or_ret!(
+        port_data,
+        make_client_dataview(graph, conf, client_name).map_items(ArrayWrapper::Client)
+    );
+
+    let con_data = path
+        .connection_idx()
+        .map(|n| graph.port_connections(&port_data.name).nth(n).unwrap());
+    let con_data = unwrap_or_ret!(
+        con_data,
+        make_port_dataview(graph, conf, port_data).map_items(ArrayWrapper::Port)
+    );
+    make_connection_dataview(graph, conf, port_data, con_data).map_items(ArrayWrapper::Con)
 }
 
 impl<'a, T: AsRef<[DataField<'a>]> + 'a> Widget for DataviewWidget<'a, T> {

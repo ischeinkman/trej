@@ -61,8 +61,8 @@ impl GraphView {
                     .prev_sibling()
                     .filter(|path| path_is_valid(graph, *path))
                     .or_else(|| cur.parent())
-                    .unwrap_or(TreePath::Root);
-                if cur == TreePath::Root && nxt == TreePath::Root {
+                    .unwrap_or_else(TreePath::root);
+                if cur == TreePath::root() && nxt == TreePath::root() {
                     nxt = nxt.nth_child(0);
                 }
                 self.set_selected_path(nxt);
@@ -74,8 +74,8 @@ impl GraphView {
                     .next_sibling()
                     .filter(|path| path_is_valid(graph, *path))
                     .or_else(|| cur.parent())
-                    .unwrap_or(TreePath::Root);
-                if cur == TreePath::Root && nxt == TreePath::Root {
+                    .unwrap_or_else(TreePath::root);
+                if cur == TreePath::root() && nxt == TreePath::root() {
                     nxt = nxt.nth_child(0);
                 }
                 self.set_selected_path(nxt);
@@ -86,7 +86,7 @@ impl GraphView {
                 let nxt = cur
                     .parent()
                     .filter(|path| path_is_valid(graph, *path))
-                    .unwrap_or(TreePath::Root);
+                    .unwrap_or_else(TreePath::root);
                 self.set_selected_path(nxt);
                 Ok(false)
             }
@@ -143,7 +143,7 @@ impl GraphView {
 fn path_is_valid(graph: &JackGraph, path: TreePath) -> bool {
     macro_rules! resolve {
         ($offset:expr, $iter:expr) => {{
-            let n = match $offset.checked_sub(1) {
+            let n = match $offset {
                 Some(n) => n,
                 None => {
                     return true;
@@ -157,9 +157,9 @@ fn path_is_valid(graph: &JackGraph, path: TreePath) -> bool {
             }
         }};
     };
-    let client = resolve!(path.client_offset(), graph.all_clients());
-    let port = resolve!(path.port_offset(), graph.client_ports(client));
-    let _ = resolve!(path.connection_offset(), graph.port_connections(&port.name));
+    let client = resolve!(path.client_idx(), graph.all_clients());
+    let port = resolve!(path.port_idx(), graph.client_ports(client));
+    let _ = resolve!(path.connection_idx(), graph.port_connections(&port.name));
     true
 }
 

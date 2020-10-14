@@ -17,26 +17,24 @@ pub struct JackTreeState {
 
 impl JackTreeState {
     pub fn select(&mut self, path: TreePath) {
-        self.client_state
-            .select(path.client_offset().checked_sub(1));
-        self.port_state.select(path.port_offset().checked_sub(1));
-        self.connection_state
-            .select(path.connection_offset().checked_sub(1));
+        self.client_state.select(path.client_idx());
+        self.port_state.select(path.port_idx());
+        self.connection_state.select(path.connection_idx());
     }
     pub fn selected(&self) -> TreePath {
-        let client_offset = self.client_state.selected().map_or(0, |n| n + 1);
-        let port_offset = self.port_state.selected().map_or(0, |n| n + 1);
-        let connection_offset = self.connection_state.selected().map_or(0, |n| n + 1);
-        TreePath::from_offsets(client_offset, port_offset, connection_offset)
+        let client_idx = self.client_state.selected();
+        let port_idx = self.port_state.selected();
+        let connection_idx = self.connection_state.selected();
+        TreePath::new(client_idx, port_idx, connection_idx)
     }
 }
 pub struct JackTree<'a> {
     graph: &'a JackGraph,
 }
 
-impl <'a> JackTree<'a> {
-    pub fn new(graph : &'a JackGraph) -> Self {
-        Self {graph}
+impl<'a> JackTree<'a> {
+    pub fn new(graph: &'a JackGraph) -> Self {
+        Self { graph }
     }
 }
 
@@ -48,7 +46,7 @@ impl<'a> StatefulWidget for JackTree<'a> {
         let (client_list, longest_client, selected_client) = make_list(
             graph.all_clients(),
             |a| a,
-            selected.client_offset(),
+            selected.client_idx(),
             "Clients",
             false,
         );
@@ -60,7 +58,7 @@ impl<'a> StatefulWidget for JackTree<'a> {
         let (port_list, longest_port, selected_port) = make_list(
             port_itr,
             |data| data.name.port_shortname(),
-            selected.port_offset(),
+            selected.port_idx(),
             "Ports",
             false,
         );
@@ -73,7 +71,7 @@ impl<'a> StatefulWidget for JackTree<'a> {
         let (con_list, longest_con, _selected_con) = make_list(
             con_itr,
             |data| data.name.as_ref(),
-            selected.connection_offset(),
+            selected.connection_idx(),
             "Connections",
             true,
         );
@@ -104,7 +102,7 @@ impl<'a> StatefulWidget for JackTree<'a> {
 fn make_list<'a, Itm, Itr, F, S>(
     itr: Itr,
     mapper: F,
-    selected: usize,
+    selected: Option<usize>,
     title: &'a str,
     last: bool,
 ) -> (List, u16, Option<&'a Itm>)
@@ -119,7 +117,7 @@ where
     let mut selected_item = None;
     let mut longest_entry = title.len();
     for (idx, data) in itr.enumerate() {
-        if selected == idx + 1 {
+        if selected == Some(idx) {
             selected_item = Some(data);
         }
         let entstr: Text<'a> = mapper(data).into();
