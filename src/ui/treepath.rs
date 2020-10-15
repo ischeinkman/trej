@@ -1,5 +1,16 @@
 use std::cmp::Ordering;
 
+macro_rules! const_try_opt {
+    ($e:expr) => {{
+        match $e {
+            Some(v) => v,
+            None => {
+                return None;
+            }
+        }
+    }};
+}
+
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub struct TreePath {
     client_offset: usize,
@@ -65,31 +76,31 @@ impl TreePath {
         self.connection_offset.checked_sub(1)
     }
 
-    pub fn next_sibling(&self) -> Option<TreePath> {
+    pub const fn next_sibling(&self) -> Option<TreePath> {
         let mut retvl = *self;
         if retvl.connection_offset != 0 {
-            retvl.connection_offset = retvl.connection_offset.checked_add(1)?;
+            retvl.connection_offset = const_try_opt!(retvl.connection_offset.checked_add(1));
             Some(retvl)
         } else if retvl.port_offset != 0 {
-            retvl.port_offset = retvl.port_offset.checked_add(1)?;
+            retvl.port_offset = const_try_opt!(retvl.port_offset.checked_add(1));
             Some(retvl)
         } else if retvl.client_offset != 0 {
-            retvl.client_offset = retvl.client_offset.checked_add(1)?;
+            retvl.client_offset = const_try_opt!(retvl.client_offset.checked_add(1));
             Some(retvl)
         } else {
             None
         }
     }
-    pub fn prev_sibling(&self) -> Option<TreePath> {
+    pub const fn prev_sibling(&self) -> Option<TreePath> {
         let mut retvl = *self;
         if retvl.connection_offset > 1 {
-            retvl.connection_offset = retvl.connection_offset.checked_sub(1)?;
+            retvl.connection_offset = const_try_opt!(retvl.connection_offset.checked_sub(1));
             Some(retvl)
         } else if retvl.port_offset > 1 {
-            retvl.port_offset = retvl.port_offset.checked_sub(1)?;
+            retvl.port_offset = const_try_opt!(retvl.port_offset.checked_sub(1));
             Some(retvl)
         } else if retvl.client_offset > 1 {
-            retvl.client_offset = retvl.client_offset.checked_sub(1)?;
+            retvl.client_offset = const_try_opt!(retvl.client_offset.checked_sub(1));
             Some(retvl)
         } else {
             None
