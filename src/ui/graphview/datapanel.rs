@@ -1,6 +1,7 @@
 use crate::config::{LockConfig, LockStatus};
 use crate::graph::JackGraph;
 use crate::model::{PortCategory, PortData, PortDirection};
+use crate::ui::{ResolvedTreepath, TreePath};
 
 use std::borrow::Cow;
 
@@ -202,7 +203,7 @@ impl<'a, T: AsRef<[DataField<'a>]> + 'a> DataviewWidget<'a, T> {
 }
 
 pub fn make_dataview<'a>(
-    path: super::TreePath,
+    path: TreePath,
     graph: &'a JackGraph,
     conf: &'a LockConfig,
 ) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
@@ -217,28 +218,20 @@ pub fn make_dataview<'a>(
         }};
     };
 
-    let client_name = path
-        .client_idx()
-        .map(|n| graph.all_clients().nth(n).unwrap());
+    let resolved = ResolvedTreepath::resolve(graph, path).unwrap_or_else(ResolvedTreepath::root);
 
     let client_name = unwrap_or_ret!(
-        client_name,
+        resolved.client(),
         make_default_dataview(graph, conf).map_items(ArrayWrapper::Default)
     );
 
-    let port_data = path
-        .port_idx()
-        .map(|n| graph.client_ports(client_name).nth(n).unwrap());
     let port_data = unwrap_or_ret!(
-        port_data,
+        resolved.port(),
         make_client_dataview(graph, conf, client_name).map_items(ArrayWrapper::Client)
     );
 
-    let con_data = path
-        .connection_idx()
-        .map(|n| graph.port_connections(&port_data.name).nth(n).unwrap());
     let con_data = unwrap_or_ret!(
-        con_data,
+        resolved.connection(),
         make_port_dataview(graph, conf, port_data).map_items(ArrayWrapper::Port)
     );
     make_connection_dataview(graph, conf, port_data, con_data).map_items(ArrayWrapper::Con)

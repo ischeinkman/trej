@@ -1,13 +1,22 @@
 use std::cmp::Ordering;
 
-macro_rules! const_try_opt {
-    ($e:expr) => {{
-        match $e {
-            Some(v) => v,
+use crate::graph::JackGraph;
+use crate::model::PortData;
+
+macro_rules! unwrap_or_ret {
+    ($itm:expr, $ret:expr) => {{
+        match $itm {
+            Some(val) => val,
             None => {
-                return None;
+                return $ret;
             }
         }
+    }};
+}
+
+macro_rules! const_try_opt {
+    ($e:expr) => {{
+        unwrap_or_ret!($e, None)
     }};
 }
 
@@ -137,5 +146,87 @@ impl Ord for TreePath {
             .cmp(&other.client_offset)
             .then(self.port_offset.cmp(&other.port_offset))
             .then(self.connection_offset.cmp(&other.connection_offset))
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct ResolvedTreepath<'a> {
+    path: TreePath,
+    client: Option<&'a str>,
+    port: Option<&'a PortData>,
+    connection: Option<&'a PortData>,
+}
+
+impl<'a> ResolvedTreepath<'a> {
+    pub const fn root() -> Self {
+        Self {
+            path: TreePath::root(),
+            client: None,
+            port: None,
+            connection: None,
+        }
+    }
+    #[allow(dead_code)]
+    pub fn path(&self) -> TreePath {
+        self.path
+    }
+    pub fn client(&self) -> Option<&'a str> {
+        self.client
+    }
+    pub fn port(&self) -> Option<&'a PortData> {
+        self.port
+    }
+    pub fn connection(&self) -> Option<&'a PortData> {
+        self.connection
+    }
+    pub fn resolve(graph: &'a JackGraph, path: TreePath) -> Option<ResolvedTreepath<'a>> {
+        let mut retvl = ResolvedTreepath::root();
+        retvl.path = path;
+        let client = match path.client_idx() {
+            Some(n) => graph.all_clients().nth(n)?,
+            None => {
+                return Some(retvl);
+            }
+        };
+        retvl.client = Some(client);
+        let port = match path.port_idx() {
+            Some(n) => graph.client_ports(client).nth(n)?,
+            None => {
+                return Some(retvl);
+            }
+        };
+        retvl.port = Some(port);
+        let connection = match path.connection_idx() {
+            Some(n) => graph.port_connections(&port.name).nth(n)?,
+            None => {
+                return Some(retvl);
+            }
+        };
+        retvl.connection = Some(connection);
+        Some(retvl)
+    }
+    pub fn resolve_partial(graph: &'a JackGraph, path: TreePath) -> ResolvedTreepath<'a> {
+        let mut retvl = ResolvedTreepath::root();
+        let client_idx = unwrap_or_ret!(path.client_idx(), retvl);
+        let client_name = unwrap_or_ret!(graph.all_clients().nth(client_idx), retvl);
+
+        retvl.path = retvl.path.nth_child(client_idx);
+        retvl.client = Some(client_name);
+
+        let port_idx = unwrap_or_ret!(path.port_idx(), retvl);
+        let port = unwrap_or_ret!(graph.client_ports(client_name).nth(port_idx), retvl);
+
+        retvl.path = retvl.path.nth_child(port_idx);
+        retvl.port = Some(port);
+
+        let connection_idx = unwrap_or_ret!(path.connection_idx(), retvl);
+        let connection = unwrap_or_ret!(
+            graph.port_connections(&port.name).nth(connection_idx),
+            retvl
+        );
+
+        retvl.path = retvl.path.nth_child(connection_idx);
+        retvl.connection = Some(connection);
+        retvl
     }
 }
