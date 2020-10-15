@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use thiserror::*;
 
 mod config;
@@ -30,25 +31,45 @@ pub enum Error {
 
 fn main() {
     let config_path = std::env::args().skip(1).last();
-    let state = match config_path {
+    let mut state = match config_path {
         Some(config) => TrejState::load_file(config).unwrap(),
         None => TrejState::load_no_config().unwrap(),
     };
-    let mut ui = ui::GraphView::new(state);
+    //let mut ui = ui::GraphView::new(state);
+    let mut ui_state = ui::GraphViewState::new();
     let output = ui::ScreenWrapper::new().unwrap();
     let mut output = tui::Terminal::new(tui::backend::CrosstermBackend::new(output)).unwrap();
-    ui.display(&mut output).unwrap();
+    output
+        .draw(|f| {
+            let w = ui::GraphViewWidget::new(&state.graph(), &state.config());
+            f.render_stateful_widget(w, f.size(), &mut ui_state);
+        })
+        .unwrap();
     loop {
-        if ui
-            .step(Some(std::time::Duration::from_millis(1000)), &mut output)
-            .unwrap()
-        {
+        let has_graph_update = state.graph().needs_update();
+        if has_graph_update {
+            state.reload().unwrap();
+            state.apply_config().unwrap();
+        }
+        let ui_event_opt = ui::poll_graphui_event(Some(Duration::from_millis(1000))).unwrap();
+        let has_ui_event = ui_event_opt.is_some();
+        let should_shutdown = ui_event_opt.map_or(false, |evt| ui_state.handle_event(evt).unwrap());
+
+        if should_shutdown {
             return;
+        }
+        if has_graph_update || has_ui_event {
+            output
+                .draw(|f| {
+                    let w = ui::GraphViewWidget::new(&state.graph(), &state.config());
+                    f.render_stateful_widget(w, f.size(), &mut ui_state);
+                })
+                .unwrap();
         }
     }
 }
 
-pub struct TrejState {
+struct TrejState {
     config: LockConfig,
     config_path: Option<PathBuf>,
     graph: JackGraph,
@@ -87,14 +108,8 @@ impl TrejState {
     pub fn config(&self) -> &LockConfig {
         &self.config
     }
-    pub fn config_mut(&mut self) -> &mut LockConfig {
-        &mut self.config
-    }
     pub fn graph(&self) -> &JackGraph {
         &self.graph
-    }
-    pub fn graph_mut(&mut self) -> &mut JackGraph {
-        &mut self.graph
     }
     pub fn reload_config(&mut self) -> Result<(), crate::Error> {
         let path = match &self.config_path {
