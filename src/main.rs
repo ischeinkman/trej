@@ -51,20 +51,25 @@ fn main() {
             state.reload().unwrap();
             state.apply_config().unwrap();
         }
-        let ui_event_opt = ui::poll_graphui_event(Some(Duration::from_millis(1000))).unwrap();
-        let has_ui_event = ui_event_opt.is_some();
-        let should_shutdown = ui_event_opt.map_or(false, |evt| ui_state.handle_event(evt).unwrap());
+        let ui_event_opt = ui_state
+            .handle_pending_event(Some(Duration::from_millis(1000)))
+            .unwrap();
 
-        if should_shutdown {
-            return;
-        }
-        if has_graph_update || has_ui_event {
-            output
-                .draw(|f| {
-                    let w = ui::GraphViewWidget::new(&state.graph(), &state.config());
-                    f.render_stateful_widget(w, f.size(), &mut ui_state);
-                })
-                .unwrap();
+        match ui_event_opt {
+            Some(ui::UiAction::Close) => {
+                return;
+            }
+            None if !has_graph_update => {
+                // No updates in state or UI, so no redrawing
+            }
+            _ => {
+                output
+                    .draw(|f| {
+                        let w = ui::GraphViewWidget::new(&state.graph(), &state.config());
+                        f.render_stateful_widget(w, f.size(), &mut ui_state);
+                    })
+                    .unwrap();
+            }
         }
     }
 }

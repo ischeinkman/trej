@@ -1,6 +1,7 @@
 use super::{ResolvedTreepath, TreePath};
 use crate::config::LockConfig;
 use crate::graph::JackGraph;
+use crate::ui::UiAction;
 
 use crossterm::event;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -31,9 +32,20 @@ impl GraphViewState {
         let next_selection = ResolvedTreepath::resolve_partial(graph, current_selection).path();
         self.tree_state.select(next_selection);
     }
-    pub fn handle_event(&mut self, evt: GraphUiEvent) -> Result<ShouldShutdown, crate::Error> {
+    pub fn handle_pending_event(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<UiAction>, crate::Error> {
+        if !event::poll(timeout.unwrap_or_else(|| Duration::from_micros(0)))? {
+            return Ok(None);
+        }
+        let raw = event::read()?;
+        let parsed: Option<GraphUiEvent> = raw.try_into().ok();
+        parsed.map_or(Ok(None), |evt| self.handle_event(evt))
+    }
+    fn handle_event(&mut self, evt: GraphUiEvent) -> Result<Option<UiAction>, crate::Error> {
         match evt {
-            GraphUiEvent::Quit => Ok(true),
+            GraphUiEvent::Quit => Ok(Some(UiAction::Close)),
             GraphUiEvent::MoveUp => {
                 let cur = self.tree_state.selected();
                 let mut nxt = cur
@@ -44,7 +56,7 @@ impl GraphViewState {
                     nxt = nxt.nth_child(0);
                 }
                 self.tree_state.select(nxt);
-                Ok(false)
+                Ok(Some(UiAction::Redraw))
             }
             GraphUiEvent::MoveDown => {
                 let cur = self.tree_state.selected();
@@ -56,19 +68,19 @@ impl GraphViewState {
                     nxt = nxt.nth_child(0);
                 }
                 self.tree_state.select(nxt);
-                Ok(false)
+                Ok(Some(UiAction::Redraw))
             }
             GraphUiEvent::MoveLeft => {
                 let cur = self.tree_state.selected();
                 let nxt = cur.parent().unwrap_or_else(TreePath::root);
                 self.tree_state.select(nxt);
-                Ok(false)
+                Ok(Some(UiAction::Redraw))
             }
             GraphUiEvent::MoveRight => {
                 let cur = self.tree_state.selected();
                 let nxt = cur.nth_child(0);
                 self.tree_state.select(nxt);
-                Ok(false)
+                Ok(Some(UiAction::Redraw))
             }
         }
     }
@@ -104,15 +116,6 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
         let dataview = make_dataview(selected, graph, conf);
         dataview.render(info_rect, buf);
     }
-}
-
-pub fn poll_graphui_event(timeout: Option<Duration>) -> Result<Option<GraphUiEvent>, crate::Error> {
-    if !event::poll(timeout.unwrap_or_else(|| Duration::from_micros(0)))? {
-        return Ok(None);
-    }
-    let raw = event::read()?;
-    let parsed = raw.try_into().ok();
-    Ok(parsed)
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -168,5 +171,3 @@ impl TryFrom<event::Event> for GraphUiEvent {
         }
     }
 }
-
-pub type ShouldShutdown = bool;

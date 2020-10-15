@@ -78,3 +78,10 @@ impl DerefMut for ScreenWrapper {
         &mut self.stdout
     }
 }
+
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum UiAction {
+    Redraw, 
+    Close,
+}
