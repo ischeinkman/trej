@@ -5,30 +5,47 @@ use std::sync::{Arc, Condvar, Mutex, TryLockError};
 use std::time::Duration;
 use thiserror::*;
 
+use jack::Client as JackClient;
+use jack::Error as JackError;
+
+/// Errors that can occur when interacting with the JACK port graph.
 #[derive(Debug, Error)]
 pub enum GraphError {
     #[error(transparent)]
-    Jack(#[from] jack::Error),
+    Jack(#[from] JackError),
     #[error(transparent)]
     ItemName(#[from] NameError),
 }
 
+/// A wrapper around the graph of JACK clients and ports.
+/// Note that this struct also caches information, and can therefore get stale.
+/// It is therefore wise to periodically poll for graph changes via the `needs_update()`
+/// method and reloading the graph via `update()`.
 #[derive(Debug)]
 pub struct JackGraph {
-    update_flag: Notifier,
+    /// The underlying `jack::Client` that will be used for synchronizing state.
     client: jack::AsyncClient<Notifier, ()>,
+
+    /// All ports currently in the JACK graph.
     ports: Vec<PortData>,
+
+    /// Connections between ports, stored as indices into `self.ports`.
+    /// Currently stored as sorted. 
     connections: Vec<(usize, usize)>,
+
+    /// Set by the backing `jack::Client` whenever the graph changes.
+    update_flag: Notifier,
 }
 
 impl JackGraph {
-    pub fn new(client: jack::Client) -> Result<Self, GraphError> {
+    /// Constructs a new `JackGraph` wrapping the given `jack::Client`. 
+    pub fn new(client: JackClient) -> Result<Self, GraphError> {
         let notifier = Notifier::new();
         let update_flag = notifier.handle();
         let client = client.activate_async(notifier, ())?;
         let mut retvl = JackGraph {
-            update_flag,
             client,
+            update_flag,
             ports: Vec::new(),
             connections: Vec::new(),
         };
@@ -36,6 +53,10 @@ impl JackGraph {
         Ok(retvl)
     }
 
+    /// Removes a connection between two ports in the graph.
+    /// Note that `source` must be an input port, `dest` must be an output port,
+    /// and there must be an existing connection between them; otherwise, this
+    /// function will return an `Err`.
     pub fn disconnect(
         &mut self,
         source: &PortFullname,
@@ -66,6 +87,11 @@ impl JackGraph {
         Ok(())
     }
 
+    /// Connects two ports in the graph.
+    /// Note that both `source` and `dest` must transfer the same data type,
+    /// `source` must be an input port, `dest` must be an output port,
+    /// and there must not be an existing connection between them; otherwise, this
+    /// function will return an `Err`.
     pub fn connect(
         &mut self,
         source: &PortFullname,
@@ -102,36 +128,33 @@ impl JackGraph {
         }
     }
 
-    pub fn wait_for_update(&self) {
-        self.update_flag.wait_timeout(None);
-    }
-
-    pub fn wait_for_update_timeout(&self, dur: Duration) {
-        self.update_flag.wait_timeout(Some(dur));
-    }
-
+    /// Checks to see if the underlying `jack::Client` has unsynced updates that
+    /// should be pulled in.
     pub fn needs_update(&self) -> bool {
         self.update_flag.check()
     }
 
+    /// Refreshes the data in the interal graph cache with data from the underlying `jack::Client`.
     pub fn update(&mut self) -> Result<(), GraphError> {
         self.update_flag.reset();
-        let port_names = self
+
+        let raw_names = self
             .client
             .as_client()
-            .ports(None, None, jack::PortFlags::empty())
+            .ports(None, None, jack::PortFlags::empty());
+        let port_names = raw_names
             .into_iter()
             .map(PortFullname::try_from)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut connections = Vec::new();
+
+        let client = &self.client;
         let port_iter = port_names.iter().enumerate().filter_map(|(idx, name)| {
-            Some((
-                idx,
-                name,
-                self.client.as_client().port_by_name(name.as_ref())?,
-            ))
+            let data = client.as_client().port_by_name(name.as_ref())?;
+            Some((idx, name, data))
         });
-        let mut ports = Vec::new();
+
+        self.ports.clear();
+        self.connections.clear();
         for (port_a_idx, port_a_name, port_a) in port_iter {
             let direction = if port_a.flags().contains(jack::PortFlags::IS_INPUT) {
                 PortDirection::In
@@ -151,18 +174,17 @@ impl JackGraph {
                 direction,
                 category,
             };
-            ports.push(data);
+            self.ports.push(data);
             for (port_b_idx, port_b) in port_names.iter().enumerate().skip(port_a_idx + 1) {
                 if port_a.is_connected_to(port_b.as_ref())? {
-                    connections.push((port_a_idx, port_b_idx));
+                    self.connections.push((port_a_idx, port_b_idx));
                 }
             }
         }
-        self.ports = ports;
-        self.connections = connections;
         Ok(())
     }
 
+    /// Gets an iterator over all ports connected a provided port.
     pub fn port_connections<'a, 'b>(
         &'a self,
         name: &'b PortFullname,
@@ -192,6 +214,10 @@ impl JackGraph {
             .filter_map(move |con_idx| self.ports.get(con_idx))
     }
 
+    /// Gets an iterator over all connections between all ports in the graph.
+    /// Each `(&port_a, &port_b)` tuple represents a connection between
+    /// `port_a` and `port_b`; the relative order within the tuple, while stable
+    /// between calls, does not convey meaningful information.
     pub fn all_connections<'a>(
         &'a self,
     ) -> impl Iterator<Item = (&'a PortData, &'a PortData)> + 'a {
@@ -203,10 +229,12 @@ impl JackGraph {
         })
     }
 
+    /// Gets the full metadata of a port with the given `name`. 
     pub fn port_by_name<'a, 'b>(&'a self, name: &'b PortFullname) -> Option<&'a PortData> {
         self.ports.iter().find(|data| &data.name == name)
     }
 
+    /// Gets an iterator over the names of all clients in the graph. 
     pub fn all_clients<'a>(&'a self) -> impl Iterator<Item = &'a str> + 'a {
         let first_client = self.ports.first().map(|data| data.name.client_name());
         let mut cur_client = first_client;
@@ -226,6 +254,7 @@ impl JackGraph {
         first_client.into_iter().chain(rest_iter)
     }
 
+    /// Gets an iterator over all ports available for a given client name. 
     pub fn client_ports<'a>(&'a self, client: &'a str) -> impl Iterator<Item = &PortData> + 'a {
         self.ports
             .iter()
@@ -234,23 +263,35 @@ impl JackGraph {
     }
 }
 
+/// Internal flag used to signal to the parent `JackGraph` that its data is stale.
+/// This is done by registering this struct as a `NotificationHandler` on the backing `Client`
+/// and setting an internal flag.
 #[derive(Debug)]
-pub struct Notifier {
+struct Notifier {
+    /// The backing notification flag. 
     rf: Arc<AtomicBool>,
+    /// Used to wait for updates. 
+    /// The `Mutex` is only used due to the fact that `Condvar`s must be associated 
+    /// with exactly 1 `Mutex`. 
     cvar: Arc<(Mutex<()>, Condvar)>,
 }
 
 impl Notifier {
+    /// Constructs a new `Notifier`. 
     pub fn new() -> Self {
         Self {
             rf: Arc::new(AtomicBool::new(false)),
             cvar: Arc::new((Mutex::new(()), Condvar::new())),
         }
     }
+
+    /// Sets the internal event flag to indicate that the backing `jack::Client` has been updated.
     pub fn set(&self) {
         self.rf.store(true, Ordering::Release);
         self.cvar.1.notify_all();
     }
+    /// Resets the internal event flag to indicate that all new changes in the backing `jack::Client`
+    /// have been processed.
     pub fn reset(&self) {
         // Need SeqCst b/c we need to gurantee that the graph updating occurs
         // *after* the store, and that the actual jack client data is updated
@@ -259,17 +300,26 @@ impl Notifier {
         // loaded.
         self.rf.store(false, Ordering::SeqCst);
     }
+
+    /// Returns whether or not there are unprocessed changes to the backing `jack::Client`.
     pub fn check(&self) -> bool {
         // Since we aren't actually touching the data yet,
         // we can load this Relaxed and worry about casuality later.
         self.rf.load(Ordering::Relaxed)
     }
+
+    /// Creates a new watcher for the same backing client.
+    /// Any calls to `set`, `reset`, or `check` will be reflected between `self` and the returned value.
     pub fn handle(&self) -> Self {
         Self {
             rf: Arc::clone(&self.rf),
             cvar: Arc::clone(&self.cvar),
         }
     }
+
+    /// Blocks the calling thread until a new event appears on the backing client
+    /// with an optional timeout.
+    #[allow(dead_code)]
     pub fn wait_timeout(&self, dur: Option<Duration>) {
         if self.check() {
             return;
@@ -295,37 +345,20 @@ impl Notifier {
 }
 
 impl jack::NotificationHandler for Notifier {
-    fn graph_reorder(&mut self, _: &jack::Client) -> jack::Control {
+    fn graph_reorder(&mut self, _: &JackClient) -> jack::Control {
         self.set();
         jack::Control::Continue
     }
-    fn ports_connected(
-        &mut self,
-        _: &jack::Client,
-        _port_id_a: jack::PortId,
-        _port_id_b: jack::PortId,
-        _are_connected: bool,
-    ) {
+    fn ports_connected(&mut self, _: &JackClient, _: jack::PortId, _: jack::PortId, _: bool) {
         self.set();
     }
-    fn client_registration(&mut self, _: &jack::Client, _name: &str, _is_registered: bool) {
+    fn client_registration(&mut self, _: &JackClient, _name: &str, _is_registered: bool) {
         self.set();
     }
-    fn port_registration(
-        &mut self,
-        _: &jack::Client,
-        _port_id: jack::PortId,
-        _is_registered: bool,
-    ) {
+    fn port_registration(&mut self, _: &JackClient, _port_id: jack::PortId, _is_registered: bool) {
         self.set();
     }
-    fn port_rename(
-        &mut self,
-        _: &jack::Client,
-        _port_id: jack::PortId,
-        _old_name: &str,
-        _new_name: &str,
-    ) -> jack::Control {
+    fn port_rename(&mut self, _: &JackClient, _: jack::PortId, _: &str, _: &str) -> jack::Control {
         self.set();
         jack::Control::Continue
     }
