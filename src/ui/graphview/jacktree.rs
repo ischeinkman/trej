@@ -142,8 +142,8 @@ where
 }
 
 fn respace_rects(rects: &mut [Rect], minimums: &[u16]) {
-    let mut extra_space = 0;
     // Collect all the extra space
+    let mut extra_space = 0;
     for idx in 0..rects.len() {
         let min_len = minimums.get(idx).copied().unwrap_or_else(u16::max_value);
         let cur_rect = rects.get_mut(idx).unwrap();
@@ -185,6 +185,26 @@ fn respace_rects(rects: &mut [Rect], minimums: &[u16]) {
         }
     }
 
+    // Add a left space for padding
+    for aidx in 0..rects.len() {
+        if extra_space == 0 {
+            break;
+        }
+        rects[aidx].x += 1;
+        for cur_rect in rects.iter_mut().skip(aidx + 1) {
+            cur_rect.x += 1;
+        }
+        extra_space -= 1;
+    }
+
     // Distribute the extra
-    rects.last_mut().unwrap().width += extra_space;
+    let mut cur_rect = 0;
+    while extra_space > 0 {
+        rects[cur_rect].width += 1;
+        for nxt in rects.iter_mut().skip(cur_rect + 1) {
+            nxt.x += 1;
+        }
+        extra_space -= 1;
+        cur_rect = (cur_rect + 1) % rects.len();
+    }
 }
