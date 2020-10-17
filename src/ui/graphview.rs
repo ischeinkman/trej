@@ -7,7 +7,7 @@ use crossterm::event;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::time::Duration;
 use tui::buffer::Buffer;
-use tui::layout::{Constraint, Layout, Rect};
+use tui::layout::{Constraint, Direction, Layout, Rect};
 use tui::widgets::{StatefulWidget, Widget};
 
 use std::convert::{TryFrom, TryInto};
@@ -18,8 +18,12 @@ use datapanel::*;
 mod jacktree;
 use jacktree::*;
 
+mod connect;
+use connect::*;
+
 #[derive(Debug, Default)]
 pub struct GraphViewState {
+    connect_popup: Option<AddConnectionState>,
     tree_state: JackTreeState,
 }
 
@@ -34,17 +38,39 @@ impl GraphViewState {
     }
     pub fn handle_pending_event(
         &mut self,
+        graph: &mut JackGraph,
+        conf: &mut LockConfig,
         timeout: Option<Duration>,
     ) -> Result<Option<UiAction>, crate::Error> {
+        if let Some(mut conpop) = self.connect_popup.take() {
+            let conres = conpop.handle_pending_event(timeout);
+            if let Ok(Some(UiAction::Close)) = conres {
+                let (port_a, port_b_opt) = conpop.into_selection(graph, conf);
+                if let Some(port_b) = port_b_opt {
+                    let (src, dst) = if port_a.direction.is_input() {
+                        (port_b.clone(), port_a)
+                    } else {
+                        (port_a, port_b.clone())
+                    };
+                    graph.connect(&src.name, &dst.name)?;
+                }
+                return Ok(Some(UiAction::Redraw));
+            } else {
+                self.connect_popup = Some(conpop);
+                return conres;
+            }
+        }
         if !event::poll(timeout.unwrap_or_else(|| Duration::from_micros(0)))? {
             return Ok(None);
         }
         let raw = event::read()?;
-        let parsed: Option<GraphUiEvent> = raw.try_into().ok();
-        parsed.map_or(Ok(None), |evt| self.handle_event(evt))
-    }
-    fn handle_event(&mut self, evt: GraphUiEvent) -> Result<Option<UiAction>, crate::Error> {
-        match evt {
+        let parsed = match raw.try_into() {
+            Ok(p) => p,
+            Err(()) => {
+                return Ok(None);
+            }
+        };
+        match parsed {
             GraphUiEvent::Quit => Ok(Some(UiAction::Close)),
             GraphUiEvent::MoveUp => {
                 let cur = self.tree_state.selected();
@@ -82,6 +108,38 @@ impl GraphViewState {
                 self.tree_state.select(nxt);
                 Ok(Some(UiAction::Redraw))
             }
+            GraphUiEvent::AddConnection => {
+                eprintln!("A");
+                let cur_selected = self.tree_state.selected();
+                let client_idx = cur_selected.client_idx();
+                let port_idx = cur_selected.port_idx();
+                let con_idx = cur_selected.connection_idx();
+                eprintln!("B");
+                let (client_idx, port_idx) = match (client_idx, port_idx, con_idx) {
+                    (Some(c), Some(p), None) => (c, p),
+                    _ => {
+                        return Ok(None);
+                    }
+                };
+                let client = match graph.all_clients().nth(client_idx) {
+                    Some(c) => c,
+                    None => {
+                        return Ok(None);
+                    }
+                };
+                let port = match graph.client_ports(client).nth(port_idx) {
+                    Some(p) => p,
+                    None => {
+                        return Ok(None);
+                    }
+                };
+
+                eprintln!("C");
+                let state = AddConnectionState::new(port);
+                self.connect_popup = Some(state);
+                eprintln!("D");
+                Ok(Some(UiAction::Redraw))
+            }
         }
     }
 }
@@ -115,6 +173,23 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
 
         let dataview = make_dataview(selected, graph, conf);
         dataview.render(info_rect, buf);
+
+        if let Some(constate) = state.connect_popup.as_mut() {
+            let mut rects = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Ratio(1, 3),
+                    Constraint::Ratio(1, 3),
+                    Constraint::Ratio(1, 3),
+                ])
+                .vertical_margin(4)
+                .split(area);
+            let _ = rects.pop().unwrap();
+            let list_area = rects.pop().unwrap();
+            let _ = rects.pop().unwrap();
+
+            AddConnectionWidget::new(graph, conf).render(list_area, buf, constate);
+        }
     }
 }
 
@@ -124,6 +199,7 @@ pub enum GraphUiEvent {
     MoveDown,
     MoveLeft,
     MoveRight,
+    AddConnection,
     Quit,
 }
 
@@ -134,6 +210,7 @@ impl TryFrom<event::KeyEvent> for GraphUiEvent {
         const LEFT_CODES: &[KeyCode] = &[KeyCode::Left, KeyCode::Char('a'), KeyCode::Char('h')];
         const DOWN_CODES: &[KeyCode] = &[KeyCode::Down, KeyCode::Char('s'), KeyCode::Char('j')];
         const RIGHT_CODES: &[KeyCode] = &[KeyCode::Right, KeyCode::Char('d'), KeyCode::Char('l')];
+        const CONNECT_CODES: &[KeyCode] = &[KeyCode::Char('c')];
 
         let code = value.code;
         let modifiers = value.modifiers;
@@ -149,6 +226,8 @@ impl TryFrom<event::KeyEvent> for GraphUiEvent {
             Ok(GraphUiEvent::MoveLeft)
         } else if RIGHT_CODES.contains(&code) {
             Ok(GraphUiEvent::MoveRight)
+        } else if CONNECT_CODES.contains(&code) {
+            Ok(GraphUiEvent::AddConnection)
         } else {
             Err(())
         }

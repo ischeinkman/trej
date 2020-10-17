@@ -52,7 +52,7 @@ fn main() {
             state.apply_config().unwrap();
         }
         let ui_event_opt = ui_state
-            .handle_pending_event(Some(Duration::from_millis(1000)))
+            .handle_pending_event(&mut state.graph, &mut state.config, Some(Duration::from_millis(1000)))
             .unwrap();
 
         match ui_event_opt {

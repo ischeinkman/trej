@@ -30,7 +30,7 @@ pub struct JackGraph {
     ports: Vec<PortData>,
 
     /// Connections between ports, stored as indices into `self.ports`.
-    /// Currently stored as sorted. 
+    /// Currently stored as sorted.
     connections: Vec<(usize, usize)>,
 
     /// Set by the backing `jack::Client` whenever the graph changes.
@@ -38,7 +38,7 @@ pub struct JackGraph {
 }
 
 impl JackGraph {
-    /// Constructs a new `JackGraph` wrapping the given `jack::Client`. 
+    /// Constructs a new `JackGraph` wrapping the given `jack::Client`.
     pub fn new(client: JackClient) -> Result<Self, GraphError> {
         let notifier = Notifier::new();
         let update_flag = notifier.handle();
@@ -229,12 +229,12 @@ impl JackGraph {
         })
     }
 
-    /// Gets the full metadata of a port with the given `name`. 
+    /// Gets the full metadata of a port with the given `name`.
     pub fn port_by_name<'a, 'b>(&'a self, name: &'b PortFullname) -> Option<&'a PortData> {
         self.ports.iter().find(|data| &data.name == name)
     }
 
-    /// Gets an iterator over the names of all clients in the graph. 
+    /// Gets an iterator over the names of all clients in the graph.
     pub fn all_clients<'a>(&'a self) -> impl Iterator<Item = &'a str> + 'a {
         let first_client = self.ports.first().map(|data| data.name.client_name());
         let mut cur_client = first_client;
@@ -254,12 +254,47 @@ impl JackGraph {
         first_client.into_iter().chain(rest_iter)
     }
 
-    /// Gets an iterator over all ports available for a given client name. 
+    /// Gets an iterator over all ports available for a given client name.
     pub fn client_ports<'a>(&'a self, client: &'a str) -> impl Iterator<Item = &PortData> + 'a {
         self.ports
             .iter()
             .skip_while(move |fullname| fullname.name.client_name() != client)
             .take_while(move |fullname| fullname.name.client_name() == client)
+    }
+
+    pub fn all_ports(&self) -> impl Iterator<Item = &PortData> {
+        self.ports.iter()
+    }
+
+    pub fn is_connected(&self, a: &PortFullname, b: &PortFullname) -> bool {
+        let mut aidx = None;
+        let mut bidx = None;
+        for (idx, cur) in self.ports.iter().enumerate() {
+            if &cur.name == a {
+                aidx = Some(idx);
+                if bidx.is_some() {
+                    break;
+                }
+            }
+            if &cur.name == b {
+                bidx = Some(idx);
+                if aidx.is_some() {
+                    break;
+                }
+            }
+        }
+        let (aidx, bidx) = match aidx.zip(bidx) {
+            Some(v) => v,
+            None => {
+                return false;
+            }
+        };
+        let key = if aidx < bidx {
+            (aidx, bidx)
+        } else {
+            (bidx, aidx)
+        };
+        self.connections.binary_search(&key).is_ok()
     }
 }
 
@@ -268,16 +303,16 @@ impl JackGraph {
 /// and setting an internal flag.
 #[derive(Debug)]
 struct Notifier {
-    /// The backing notification flag. 
+    /// The backing notification flag.
     rf: Arc<AtomicBool>,
-    /// Used to wait for updates. 
-    /// The `Mutex` is only used due to the fact that `Condvar`s must be associated 
-    /// with exactly 1 `Mutex`. 
+    /// Used to wait for updates.
+    /// The `Mutex` is only used due to the fact that `Condvar`s must be associated
+    /// with exactly 1 `Mutex`.
     cvar: Arc<(Mutex<()>, Condvar)>,
 }
 
 impl Notifier {
-    /// Constructs a new `Notifier`. 
+    /// Constructs a new `Notifier`.
     pub fn new() -> Self {
         Self {
             rf: Arc::new(AtomicBool::new(false)),

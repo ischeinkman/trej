@@ -109,6 +109,13 @@ impl PortDirection {
             PortDirection::Out => true,
         }
     }
+
+    pub const fn flip(self) -> PortDirection {
+        match self {
+            PortDirection::In => PortDirection::Out, 
+            PortDirection::Out => PortDirection::In, 
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
