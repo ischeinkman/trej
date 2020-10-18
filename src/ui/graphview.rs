@@ -85,6 +85,9 @@ impl GraphViewState {
             return Ok(None);
         }
         let raw = event::read()?;
+        if let event::Event::Resize(_, _) = raw {
+            return Ok(Some(UiAction::Redraw));
+        }
         let parsed = match raw.try_into() {
             Ok(p) => p,
             Err(()) => {
