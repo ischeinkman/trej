@@ -6,6 +6,7 @@ use crate::ui::UiAction;
 use tui::buffer::Buffer;
 use tui::layout::Rect;
 use tui::style::{Modifier, Style};
+use tui::text::Span;
 use tui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget,
 };
@@ -109,6 +110,22 @@ impl<'a> AddConnectionWidget<'a> {
     }
 }
 
+impl<'a> AddConnectionWidget<'a> {
+    pub fn dims(&self, state: &AddConnectionState) -> (u16, u16) {
+        let (max_item_size, count) = available_ports(&state.port, self.graph, self.conf)
+            .map(|data| data.name.as_ref().len())
+            .fold((0, 0), |(w, h), cur_width| (w.max(cur_width), h + 1));
+
+        const TITLE_LEN: usize = "Select New Port".len() + 3;
+        let item_width = max_item_size.max(TITLE_LEN);
+        let item_width = item_width as u16;
+        let w = item_width + 4; // Left border + left padding + right border + right padding
+        let count = count.max(1);
+        let h = (count as u16) + 2; // Top border + bottom border
+        (w, h)
+    }
+}
+
 impl<'a> StatefulWidget for AddConnectionWidget<'a> {
     type State = AddConnectionState;
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -147,10 +164,15 @@ fn available_ports<'a, 'b: 'a>(
 }
 
 fn make_block<'a>() -> Block<'a> {
+    let title_style = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED);
+    let title = Span::styled("Select New Port", title_style);
     Block::default()
         .borders(Borders::all())
-        .border_type(BorderType::Rounded)
-        .title("Select New Port...")
+        .border_type(BorderType::Double)
+        .border_style(Style::default().add_modifier(Modifier::BOLD))
+        .title(title)
 }
 
 enum AddConnectionEvent {

@@ -7,7 +7,7 @@ use crossterm::event;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::time::Duration;
 use tui::buffer::Buffer;
-use tui::layout::{Constraint, Direction, Layout, Rect};
+use tui::layout::{Constraint, Layout, Rect};
 use tui::widgets::{StatefulWidget, Widget};
 
 use std::convert::{TryFrom, TryInto};
@@ -175,20 +175,22 @@ impl<'a> StatefulWidget for GraphViewWidget<'a> {
         dataview.render(info_rect, buf);
 
         if let Some(constate) = state.connect_popup.as_mut() {
-            let mut rects = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Ratio(1, 3),
-                    Constraint::Ratio(1, 3),
-                    Constraint::Ratio(1, 3),
-                ])
-                .vertical_margin(4)
-                .split(area);
-            let _ = rects.pop().unwrap();
-            let list_area = rects.pop().unwrap();
-            let _ = rects.pop().unwrap();
+            let widget = AddConnectionWidget::new(graph, conf);
+            let (width, height) = widget.dims(constate);
 
-            AddConnectionWidget::new(graph, conf).render(list_area, buf, constate);
+            // Center the list horizontally.
+            let extra_space = area.width.saturating_sub(width);
+            let left_pad = extra_space / 2;
+            let mut list_area = area;
+            list_area.x += left_pad;
+            list_area.width -= extra_space;
+
+            list_area.y += 4; // 4 spaces of vertical padding.
+            list_area.height -= 8; // 4 to offset the y padding + 4 to pad the bottom
+            let extra_height = list_area.height.saturating_sub(height);
+            list_area.height -= extra_height; // Align as far up as possible.
+
+            widget.render(list_area, buf, constate);
         }
     }
 }
