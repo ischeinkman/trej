@@ -3,6 +3,8 @@ use thiserror::*;
 mod ports;
 pub use ports::*;
 
+mod pathing;
+pub use pathing::*;
 
 #[derive(Debug, Error)]
 pub enum NameError {

@@ -1,7 +1,8 @@
-use super::{ResolvedTreepath, TreePath};
 use crate::config::LockConfig;
 use crate::graph::JackGraph;
 use crate::ui::UiAction;
+
+use crate::model::ItemKey;
 
 use crossterm::event;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -36,7 +37,7 @@ impl GraphViewState {
     }
     fn resolve_tree_state(&mut self, graph: &JackGraph) {
         let current_selection = self.tree_state.selected();
-        let next_selection = ResolvedTreepath::resolve_partial(graph, current_selection).path();
+        let next_selection = resolve_partial(graph, current_selection);
         self.tree_state.select(next_selection);
     }
     pub fn handle_pending_event(
@@ -101,8 +102,8 @@ impl GraphViewState {
                 let mut nxt = cur
                     .prev_sibling()
                     .or_else(|| cur.parent())
-                    .unwrap_or_else(TreePath::root);
-                if cur == TreePath::root() && nxt == TreePath::root() {
+                    .unwrap_or_else(ItemKey::root);
+                if cur == ItemKey::root() && nxt == ItemKey::root() {
                     nxt = nxt.nth_child(0);
                 }
                 self.tree_state.select(nxt);
@@ -113,8 +114,8 @@ impl GraphViewState {
                 let mut nxt = cur
                     .next_sibling()
                     .or_else(|| cur.parent())
-                    .unwrap_or_else(TreePath::root);
-                if cur == TreePath::root() && nxt == TreePath::root() {
+                    .unwrap_or_else(ItemKey::root);
+                if cur == ItemKey::root() && nxt == ItemKey::root() {
                     nxt = nxt.nth_child(0);
                 }
                 self.tree_state.select(nxt);
@@ -122,7 +123,7 @@ impl GraphViewState {
             }
             GraphUiEvent::MoveLeft => {
                 let cur = self.tree_state.selected();
-                let nxt = cur.parent().unwrap_or_else(TreePath::root);
+                let nxt = cur.parent().unwrap_or_else(ItemKey::root);
                 self.tree_state.select(nxt);
                 Ok(Some(UiAction::Redraw))
             }
@@ -321,4 +322,29 @@ impl TryFrom<event::Event> for GraphUiEvent {
             }
         }
     }
+}
+
+fn resolve_partial(graph: &JackGraph, path: ItemKey) -> ItemKey {
+    macro_rules! do_layer {
+        ($idx:expr, $itr:expr, $retvl:expr) => {{
+            let (cur_idx, cur_key) = match $idx.and_then(|n| Some((n, $itr.nth(n)?))) {
+                Some(vals) => vals,
+                None => {
+                    return $retvl;
+                }
+            };
+            ($retvl.nth_child(cur_idx), cur_key)
+        }};
+    }
+
+    let retvl = ItemKey::root();
+    let (retvl, client_name) = do_layer!(path.client_idx(), graph.all_clients(), retvl);
+    let (retvl, port) = do_layer!(path.port_idx(), graph.client_ports(client_name), retvl);
+    let (retvl, _connection) = do_layer!(
+        path.connection_idx(),
+        graph.port_connections(&port.name),
+        retvl
+    );
+
+    retvl
 }

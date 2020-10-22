@@ -1,7 +1,8 @@
 use crate::config::{LockConfig, LockStatus};
 use crate::graph::JackGraph;
+use crate::model::ItemDataRef;
+use crate::model::ItemKey;
 use crate::model::{PortCategory, PortData, PortDirection};
-use crate::ui::{ResolvedTreepath, TreePath};
 
 use std::borrow::Cow;
 
@@ -203,7 +204,7 @@ impl<'a, T: AsRef<[DataField<'a>]> + 'a> DataviewWidget<'a, T> {
 }
 
 pub fn make_dataview<'a>(
-    path: TreePath,
+    path: ItemKey,
     graph: &'a JackGraph,
     conf: &'a LockConfig,
 ) -> DataviewWidget<'a, impl AsRef<[DataField<'a>]> + 'a> {
@@ -218,7 +219,7 @@ pub fn make_dataview<'a>(
         }};
     };
 
-    let resolved = ResolvedTreepath::resolve(graph, path).unwrap_or_else(ResolvedTreepath::root);
+    let resolved = resolve(graph, path).unwrap_or_else(ItemDataRef::root);
 
     let client_name = unwrap_or_ret!(
         resolved.client(),
@@ -330,4 +331,30 @@ impl<'a> DataField<'a> {
         let value = Cow::Borrowed(&*self.value);
         Span::raw(value).width()
     }
+}
+
+fn resolve(graph: &JackGraph, path: ItemKey) -> Option<ItemDataRef<'_>> {
+    let mut retvl = ItemDataRef::root();
+    let client = match path.client_idx() {
+        Some(n) => graph.all_clients().nth(n)?,
+        None => {
+            return Some(retvl);
+        }
+    };
+    retvl = ItemDataRef::from_client(client);
+    let port = match path.port_idx() {
+        Some(n) => graph.client_ports(client).nth(n)?,
+        None => {
+            return Some(retvl);
+        }
+    };
+    retvl = ItemDataRef::from_port(port);
+    let connection = match path.connection_idx() {
+        Some(n) => graph.port_connections(&port.name).nth(n)?,
+        None => {
+            return Some(retvl);
+        }
+    };
+    retvl = ItemDataRef::from_connection(port, connection);
+    Some(retvl)
 }

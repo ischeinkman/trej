@@ -5,8 +5,7 @@ use tui::text::{Span, Text};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget};
 
 use crate::graph::JackGraph;
-
-use super::TreePath;
+use crate::model::ItemKey;
 
 #[derive(Debug, Default)]
 pub struct JackTreeState {
@@ -16,16 +15,16 @@ pub struct JackTreeState {
 }
 
 impl JackTreeState {
-    pub fn select(&mut self, path: TreePath) {
+    pub fn select(&mut self, path: ItemKey) {
         self.client_state.select(path.client_idx());
         self.port_state.select(path.port_idx());
         self.connection_state.select(path.connection_idx());
     }
-    pub fn selected(&self) -> TreePath {
+    pub fn selected(&self) -> ItemKey {
         let client_idx = self.client_state.selected();
         let port_idx = self.port_state.selected();
         let connection_idx = self.connection_state.selected();
-        TreePath::new(client_idx, port_idx, connection_idx)
+        ItemKey::new(client_idx, port_idx, connection_idx)
     }
 }
 pub struct JackTree<'a> {
