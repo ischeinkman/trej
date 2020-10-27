@@ -3,7 +3,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::convert::TryFrom;
 use std::fmt;
 
-use super::NameError;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum NameError {
+    #[error("Invalid port full name.")]
+    InvalidFullname,
+
+    #[error("Port name too long.")]
+    PortnameTooLong,
+
+    #[error("Client name too long.")]
+    ClientnameTooLong,
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct PortFullname {

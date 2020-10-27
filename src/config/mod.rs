@@ -4,22 +4,22 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::hash::Hash;
 
-mod file;
+mod parsing;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(from = "file::ConfigFile", into = "file::ConfigFile")]
+#[serde(from = "parsing::ConfigFile", into = "parsing::ConfigFile")]
 pub struct LockConfig {
     client_locks: HashMap<String, LockStatus>,
     port_locks: HashMap<PortFullname, LockStatus>,
     connections_list: Vec<(PortFullname, PortFullname)>,
 }
 
-impl From<LockConfig> for file::ConfigFile {
+impl From<LockConfig> for parsing::ConfigFile {
     fn from(conf: LockConfig) -> Self {
-        let mut client_map: HashMap<String, file::ClientInfo> = HashMap::new();
-        let mut port_map: HashMap<PortFullname, file::PortInfo> = HashMap::new();
+        let mut client_map: HashMap<String, parsing::ClientInfo> = HashMap::new();
+        let mut port_map: HashMap<PortFullname, parsing::PortInfo> = HashMap::new();
         for (client_name, lock) in conf.client_locks {
-            client_map.insert(client_name, file::ClientInfo::new().with_lock(lock));
+            client_map.insert(client_name, parsing::ClientInfo::new().with_lock(lock));
         }
         for (port_name, lock) in conf.port_locks {
             let ent = client_map
@@ -54,21 +54,21 @@ impl From<LockConfig> for file::ConfigFile {
         }
         let client_ents = client_map
             .into_iter()
-            .map(|(name, info)| file::LockEntry::Client { name, info });
+            .map(|(name, info)| parsing::LockEntry::Client { name, info });
         let port_ents = port_map
             .into_iter()
-            .map(|(name, info)| file::LockEntry::Port { name, info });
+            .map(|(name, info)| parsing::LockEntry::Port { name, info });
         let entries = client_ents.chain(port_ents).collect();
-        file::ConfigFile { entries }
+        parsing::ConfigFile { entries }
     }
 }
 
-impl From<file::ConfigFile> for LockConfig {
-    fn from(fl: file::ConfigFile) -> Self {
+impl From<parsing::ConfigFile> for LockConfig {
+    fn from(fl: parsing::ConfigFile) -> Self {
         let mut retvl = LockConfig::new();
         for ent in fl.entries {
             match ent {
-                file::LockEntry::Client { name, info } => {
+                parsing::LockEntry::Client { name, info } => {
                     if let Some(lock) = info.lock {
                         retvl.client_locks.insert(name.clone(), lock);
                     }
@@ -90,7 +90,7 @@ impl From<file::ConfigFile> for LockConfig {
                         }
                     }
                 }
-                file::LockEntry::Port { name, info } => {
+                parsing::LockEntry::Port { name, info } => {
                     if let Some(lock) = info.lock {
                         retvl.port_locks.insert(name.clone(), lock);
                     }
