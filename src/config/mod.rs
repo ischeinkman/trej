@@ -6,7 +6,7 @@ use std::hash::Hash;
 
 mod parsing;
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(from = "parsing::ConfigFile", into = "parsing::ConfigFile")]
 pub struct LockConfig {
     client_locks: HashMap<String, LockStatus>,

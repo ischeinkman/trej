@@ -7,6 +7,8 @@ mod graph;
 mod model;
 mod ui;
 
+mod daemon;
+
 mod state;
 use state::TrejState;
 
@@ -26,9 +28,26 @@ pub enum Error {
 
     #[error(transparent)]
     ConfigParser(#[from] toml::de::Error),
+
+    #[error(transparent)]
+    NameParser(#[from] crate::model::NameError),
+
+    #[error(transparent)]
+    ConfigWatcher(#[from] notify::Error),
+
+    #[error(transparent)]
+    DaemonArgParser(#[from] crate::daemon::ArgError),
 }
 
+const SHOULD_BE_DAEMON: bool = true;
+use daemon::{DaemonArgs, TrejDaemon};
+
 fn main() {
+    if SHOULD_BE_DAEMON {
+        let args = DaemonArgs::from_args(std::env::args()).unwrap();
+        let (daemon, _) = TrejDaemon::new(args).unwrap();
+        return daemon.run().unwrap();
+    }
     let config_path = std::env::args().skip(1).last();
     let mut state = match config_path {
         Some(config) => TrejState::load_file(config).unwrap(),
@@ -51,7 +70,11 @@ fn main() {
             state.apply_config().unwrap();
         }
         let ui_event_opt = ui_state
-            .handle_pending_event(&mut state.graph, &mut state.config, Some(Duration::from_millis(1000)))
+            .handle_pending_event(
+                &mut state.graph,
+                &mut state.config,
+                Some(Duration::from_millis(1000)),
+            )
             .unwrap();
 
         match ui_event_opt {
